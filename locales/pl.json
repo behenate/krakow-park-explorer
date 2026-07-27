@@ -1,0 +1,7 @@
+{
+  "CFBundleDisplayName": "Odkrywca Krakowskich Parków",
+  "NSLocationWhenInUseUsageDescription": "Odkrywca Krakowskich Parków pokazuje parki w pobliżu i planuje trasy. Lokalizacja jest używana tylko podczas korzystania z aplikacji.",
+  "NSLocationAlwaysAndWhenInUseUsageDescription": "Podczas aktywnego podążania trasą aplikacja obserwuje lokalizację, by wykryć dotarcie do parku. Śledzenie kończy się wraz z trasą.",
+  "NSCameraUsageDescription": "Rób zdjęcia-wspomnienia w odwiedzanych parkach.",
+  "NSPhotoLibraryUsageDescription": "Dołączaj zdjęcia z biblioteki do wizyt w parkach."
+}
