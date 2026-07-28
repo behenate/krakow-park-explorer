@@ -11,6 +11,9 @@ export const ZZM = {
   okpUrl: 'https://zzm.krakow.pl/okp.html',
 };
 
+/** This app's open-source repository. */
+export const GITHUB_URL = 'https://github.com/behenate/krakow-park-explorer';
+
 /** Booklet distribution points (spec 4.5). */
 export const DISTRIBUTION_POINTS = [
   {

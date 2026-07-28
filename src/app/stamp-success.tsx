@@ -53,29 +53,33 @@ export default function StampSuccessScreen() {
     }
   };
 
-  const pickPhoto = async () => {
+  /**
+   * You've just stamped a park and you're standing in it — this always means
+   * the camera. It never falls through to the library: cancelling the camera
+   * used to pop the gallery picker straight afterwards, which read as a bug.
+   * The library is still reachable from My Visit on the park detail screen.
+   */
+  const takePhoto = async () => {
+    const perm = await ImagePicker.requestCameraPermissionsAsync().catch(() => null);
+    if (!perm?.granted) return;
     const res = await ImagePicker.launchCameraAsync({ quality: 0.8 }).catch(() => null);
-    const fallback =
-      res && !res.canceled
-        ? res
-        : await ImagePicker.launchImageLibraryAsync({ quality: 0.8 }).catch(() => null);
-    if (fallback && !fallback.canceled && fallback.assets[0]) {
-      let lat: number | undefined;
-      let lng: number | undefined;
-      try {
-        const { status } = await Location.getForegroundPermissionsAsync();
-        if (status === Location.PermissionStatus.GRANTED) {
-          const last = await Location.getLastKnownPositionAsync();
-          if (last) {
-            lat = last.coords.latitude;
-            lng = last.coords.longitude;
-          }
+    if (!res || res.canceled || !res.assets[0]) return;
+
+    let lat: number | undefined;
+    let lng: number | undefined;
+    try {
+      const { status } = await Location.getForegroundPermissionsAsync();
+      if (status === Location.PermissionStatus.GRANTED) {
+        const last = await Location.getLastKnownPositionAsync();
+        if (last) {
+          lat = last.coords.latitude;
+          lng = last.coords.longitude;
         }
-      } catch {
-        // no geotag — photo still saves
       }
-      addPhoto(park.id, { uri: persistPhoto(fallback.assets[0].uri), lat, lng });
+    } catch {
+      // no geotag — photo still saves
     }
+    addPhoto(park.id, { uri: persistPhoto(res.assets[0].uri), lat, lng });
   };
 
   return (
@@ -108,7 +112,7 @@ export default function StampSuccessScreen() {
           label={t('addMemoryPhoto')}
           color={pal.ink}
           onPress={async () => {
-            await pickPhoto();
+            await takePhoto();
             close();
           }}
         />

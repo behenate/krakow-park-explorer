@@ -2,8 +2,8 @@ import * as Haptics from 'expo-haptics';
 import * as ImagePicker from 'expo-image-picker';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Location from 'expo-location';
-import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
-import React, { useMemo, useState } from 'react';
+import { Stack, useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
+import React, { useCallback, useMemo, useState } from 'react';
 import {
   Image,
   Linking,
@@ -46,10 +46,25 @@ export default function ParkDetailScreen() {
   const [photoSourceVisible, setPhotoSourceVisible] = useState(false);
   const [historyExpanded, setHistoryExpanded] = useState(false);
   const [noteDraft, setNoteDraft] = useState<string | null>(null);
+  /**
+   * Set the moment a park is stamped and cleared when this screen regains
+   * focus. While set, the screen keeps rendering its un-stamped state so the
+   * new stamp is never spoiled behind the celebration screen's push
+   * transition — the stamp-slam animation gets to be the reveal.
+   */
+  const [holdStampReveal, setHoldStampReveal] = useState(false);
 
   const visit = park ? visits[park.id] : undefined;
+  const showStamped = !!visit && !holdStampReveal;
 
   const pal = useMemo(() => (park ? categories[park.category] : categories.forest), [park]);
+
+  useFocusEffect(
+    useCallback(() => {
+      // Back from the celebration — the user has seen the animation, reveal.
+      setHoldStampReveal(false);
+    }, []),
+  );
 
   if (!park) return null;
 
@@ -64,6 +79,9 @@ export default function ParkDetailScreen() {
     : null;
 
   const doStamp = () => {
+    // Hold the reveal BEFORE writing to the store, so this screen never
+    // renders the stamped state while the celebration is still animating in.
+    setHoldStampReveal(true);
     stamp(park.id);
     setConfirmVisible(false);
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
@@ -79,6 +97,12 @@ export default function ParkDetailScreen() {
    */
   const addPhotoFrom = async (source: 'camera' | 'library') => {
     setPhotoSourceVisible(false);
+    // The chooser is a React Native <Modal>. Presenting the system picker
+    // while it is still on screen is silently dropped on iOS (you cannot
+    // present two view controllers at once), so wait out the fade-out first.
+    // The camera path only appeared to work because its permission request
+    // happened to yield long enough for the modal to go away.
+    await closeModalAndSettle();
 
     let res: ImagePicker.ImagePickerResult | null;
     if (source === 'camera') {
@@ -86,6 +110,8 @@ export default function ParkDetailScreen() {
       if (!perm?.granted) return;
       res = await ImagePicker.launchCameraAsync({ quality: 0.8 }).catch(() => null);
     } else {
+      const perm = await ImagePicker.requestMediaLibraryPermissionsAsync().catch(() => null);
+      if (!perm?.granted) return;
       res = await ImagePicker.launchImageLibraryAsync({ quality: 0.8 }).catch(() => null);
     }
     if (!res || res.canceled || !res.assets[0]) return;
@@ -133,7 +159,7 @@ export default function ParkDetailScreen() {
             >
               <Icon name="back" size={22} color={ground.text} />
             </Pressable>
-            {visit ? (
+            {showStamped ? (
               <View style={[styles.stampedBadge, { backgroundColor: categories.forest.tint }]}>
                 <Text style={[styles.stampedBadgeText, { color: categories.forest.deep }]}>
                   {t('stampedOn')} {stampedDate}
@@ -168,7 +194,7 @@ export default function ParkDetailScreen() {
             <Heading style={{ fontSize: 34, flex: 1 }}>{park.name}</Heading>
             {/* Hero stamp: double size, fixed 15° left tilt, gently floating. */}
             <Floaty>
-              <StampView parkId={park.id} size={128} stamped={!!visit} rotation={-15} />
+              <StampView parkId={park.id} size={128} stamped={showStamped} rotation={-15} />
             </Floaty>
           </View>
           <View style={styles.pillRow}>
@@ -186,7 +212,7 @@ export default function ParkDetailScreen() {
 
         <View style={{ paddingHorizontal: spacing.md, gap: spacing.md }}>
           {/* Actions */}
-          {!visit ? (
+          {!showStamped ? (
             <PillButton
               label={t('markAsStamped')}
               color={pal.ink}
@@ -211,7 +237,7 @@ export default function ParkDetailScreen() {
           </View>
 
           {/* My visit */}
-          {visit ? (
+          {showStamped && visit ? (
             <Card>
               <SectionLabel color={pal.deep}>{t('myVisit')}</SectionLabel>
               <View style={styles.photoRow}>
@@ -326,6 +352,14 @@ export default function ParkDetailScreen() {
  * (iOS bounce) never reveals the bare background above it.
  */
 const GRADIENT_SKIRT = 500;
+
+/**
+ * Wait for a dismissed <Modal> to actually leave the screen before presenting
+ * a native picker over it. Matches the Dialog's `animationType="fade"` plus a
+ * small margin; without it iOS drops the picker presentation entirely.
+ */
+const MODAL_DISMISS_MS = 400;
+const closeModalAndSettle = () => new Promise<void>((resolve) => setTimeout(resolve, MODAL_DISMISS_MS));
 
 const styles = StyleSheet.create({
   // Design source: background: linear-gradient(var(--tint) 0, var(--bg) 340px)

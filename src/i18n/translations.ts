@@ -233,6 +233,8 @@ export const translations = {
     getBooklet: 'Get the booklet · distribution points',
     rulesFaq: 'Rules & FAQ',
     reportToZzm: 'Report a box problem → ZZM',
+    github: 'GitHub',
+    githubSub: 'Source code, issues and releases',
     aboutFooter:
       'Kraków Park Explorer 1.0 · unofficial companion, not affiliated with ZZM · offline & account-free · map data © OpenStreetMap, timetables © ZTP Kraków',
     replayIntro: 'Replay intro',
@@ -478,6 +480,8 @@ export const translations = {
     getBooklet: 'Zdobądź książeczkę · punkty dystrybucji',
     rulesFaq: 'Zasady i FAQ',
     reportToZzm: 'Zgłoś problem ze skrzynką → ZZM',
+    github: 'GitHub',
+    githubSub: 'Kod źródłowy, zgłoszenia i wydania',
     aboutFooter:
       'Odkrywca Krakowskich Parków 1.0 · nieoficjalny towarzysz, niezwiązany z ZZM · offline i bez kont · dane mapowe © OpenStreetMap, rozkłady © ZTP Kraków',
     replayIntro: 'Powtórz wprowadzenie',

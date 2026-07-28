@@ -1,7 +1,7 @@
 {
   "expo": {
     "name": "Kraków Park Explorer",
-    "slug": "parko",
+    "slug": "krakow-park-explorer",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
@@ -15,7 +15,8 @@
         "NSLocationWhenInUseUsageDescription": "Kraków Park Explorer shows parks near you and plans routes. Location is used only while you use the app.",
         "NSLocationAlwaysAndWhenInUseUsageDescription": "While you actively follow a route, Kraków Park Explorer watches your location to detect when you reach a park. Tracking stops the moment the route ends.",
         "NSCameraUsageDescription": "Take memory photos at the parks you visit.",
-        "NSPhotoLibraryUsageDescription": "Attach photos from your library to park visits."
+        "NSPhotoLibraryUsageDescription": "Attach photos from your library to park visits.",
+        "ITSAppUsesNonExemptEncryption": false
       }
     },
     "android": {
@@ -30,7 +31,10 @@
         "android.permission.ACCESS_COARSE_LOCATION",
         "android.permission.ACCESS_FINE_LOCATION",
         "android.permission.ACCESS_BACKGROUND_LOCATION",
-        "android.permission.CAMERA"
+        "android.permission.CAMERA",
+        "android.permission.FOREGROUND_SERVICE",
+        "android.permission.FOREGROUND_SERVICE_LOCATION",
+        "android.permission.RECORD_AUDIO"
       ],
       "predictiveBackGestureEnabled": false
     },
@@ -71,6 +75,13 @@
     },
     "locales": {
       "pl": "./locales/pl.json"
-    }
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "08b4b5f2-e7a4-4d74-a05a-af9e1eec98d2"
+      }
+    },
+    "owner": "rtk-dev"
   }
 }

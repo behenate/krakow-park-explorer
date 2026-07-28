@@ -3,7 +3,7 @@ import { Linking, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, Vie
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Body, Heading, PillButton, SectionLabel } from '@/components/ui';
-import { ZZM } from '@/config';
+import { GITHUB_URL, ZZM } from '@/config';
 import { useI18n } from '@/i18n';
 import { autoBackupIfEnabled, exportBackup, importBackup, writeLocalBackup } from '@/lib/backup';
 import { useAppStore } from '@/store';
@@ -156,6 +156,17 @@ export default function SettingsScreen() {
         style={styles.rowCard}
       >
         <Text style={styles.rowTitle}>{t('reportToZzm')}</Text>
+      </Pressable>
+      <Pressable
+        accessibilityRole="link"
+        accessibilityLabel={t('github')}
+        onPress={() => Linking.openURL(GITHUB_URL)}
+        style={styles.rowCard}
+      >
+        <View style={{ flex: 1 }}>
+          <Text style={styles.rowTitle}>{t('github')}</Text>
+          <Text style={styles.rowSub}>{t('githubSub')}</Text>
+        </View>
       </Pressable>
 
       <View style={{ marginTop: 20, gap: 8 }}>
