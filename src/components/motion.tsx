@@ -3,6 +3,7 @@ import {
   Animated as RNAnimated,
   Easing as RNEasing,
   StyleSheet,
+  useWindowDimensions,
   View,
   ViewStyle,
 } from 'react-native';
@@ -198,16 +199,30 @@ export function Floaty({
   );
 }
 
-/** @keyframes fall — confetti rain: pieces fall 900px rotating 560°, looped. */
+/** @keyframes fall — confetti rain: pieces fall through the screen rotating 560°, looped. */
 const CONFETTI_COLORS = ['#c67139', '#6f8153', '#4f7d99', '#b04437', '#7a8a5e'];
 
-function ConfettiPiece({ index, duration }: { index: number; duration: number }) {
+function ConfettiPiece({
+  index,
+  duration,
+  fallHeight,
+}: {
+  index: number;
+  duration: number;
+  /** Full window height — travel must span it so pieces spawn above the
+   * screen and disappear below it. A hardcoded 900px end stop made pieces
+   * vanish (and reset) mid-screen on taller devices. */
+  fallHeight: number;
+}) {
   const reduced = useReducedMotion();
   const t = useRef(new RNAnimated.Value(0)).current;
   useEffect(() => {
     if (reduced) return;
     const anim = RNAnimated.sequence([
-      RNAnimated.delay((index * 137) % 2000),
+      // Start delays spread uniformly across the whole fall duration:
+      // after the first cycle every piece loops with a distinct phase,
+      // so the rain is constant instead of arriving in bursts.
+      RNAnimated.delay((index * 997) % duration),
       RNAnimated.loop(
         RNAnimated.timing(t, { toValue: 1, duration, easing: RNEasing.linear, useNativeDriver: true }),
       ),
@@ -227,11 +242,11 @@ function ConfettiPiece({ index, duration }: { index: number; duration: number })
           width: size,
           height: size * 1.5,
           backgroundColor: CONFETTI_COLORS[index % CONFETTI_COLORS.length],
-          opacity: reduced
-            ? 0.85
-            : t.interpolate({ inputRange: [0, 0.02, 1], outputRange: [0, 0.85, 0.85] }),
+          opacity: 0.85,
           transform: [
-            { translateY: t.interpolate({ inputRange: [0, 1], outputRange: [-20, 900] }) },
+            // Both endpoints are off-screen, so the loop reset (bottom
+            // teleporting back above the top) is never visible.
+            { translateY: t.interpolate({ inputRange: [0, 1], outputRange: [-40, fallHeight + 40] }) },
             {
               rotate: t.interpolate({
                 inputRange: [0, 1],
@@ -246,10 +261,11 @@ function ConfettiPiece({ index, duration }: { index: number; duration: number })
 }
 
 export function ConfettiRain({ count = 26, duration = 3600 }: { count?: number; duration?: number }) {
+  const { height } = useWindowDimensions();
   return (
     <View style={StyleSheet.absoluteFill} pointerEvents="none">
       {Array.from({ length: count }).map((_, i) => (
-        <ConfettiPiece key={i} index={i} duration={duration} />
+        <ConfettiPiece key={i} index={i} duration={duration} fallHeight={height} />
       ))}
     </View>
   );

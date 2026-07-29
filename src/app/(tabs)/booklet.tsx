@@ -1,4 +1,3 @@
-import * as MediaLibrary from 'expo-media-library';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import * as Sharing from 'expo-sharing';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -8,12 +7,12 @@ import Svg, { Circle } from 'react-native-svg';
 import ViewShot, { ViewShotRef } from 'react-native-view-shot';
 
 import { Floaty, PopIn, RingFillCircle } from '@/components/motion';
-import { photoExists } from '@/lib/photos';
+import { photoExists, resolvePhotoUri } from '@/lib/photos';
 import { Body, Chip, Heading, PillButton, SectionLabel, StampRing } from '@/components/ui';
 import { WrappedCard, WrappedVariant } from '@/components/WrappedCard';
 import { StampView } from '@/components/StampView';
 import { Park, parks, TOTAL_PARKS } from '@/data/parks';
-import { useI18n } from '@/i18n';
+import { localeTag, useI18n } from '@/i18n';
 import { photoUris, useAppStore } from '@/store';
 import { CategoryId, categories, fonts, ground, radii, spacing } from '@/theme/tokens';
 
@@ -25,6 +24,9 @@ const SEGMENTS: Segment[] = ['progress', 'stamps', 'stats', 'wrapped'];
 
 /** Gap between Wrapped carousel cards. */
 const CARD_GAP = 14;
+
+/** Plot height of the parks-per-month chart. */
+const CHART_H = 110;
 
 function isSegment(value: string | undefined): value is Segment {
   return !!value && (SEGMENTS as string[]).includes(value);
@@ -39,10 +41,8 @@ export default function BookletScreen() {
   const distanceTotal = useAppStore((s) => s.distanceKmTotal);
 
   const [segment, setSegment] = useState<Segment>('progress');
-  const [justSaved, setJustSaved] = useState(false);
   const [activeCard, setActiveCard] = useState(0);
   const shotRefs = useRef<Record<number, ViewShotRef | null>>({});
-  const savedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const { width } = useWindowDimensions();
 
   // Design 1v proportions: 210×340 card with side peeks
@@ -52,13 +52,6 @@ export default function BookletScreen() {
   useEffect(() => {
     if (isSegment(segmentParam)) setSegment(segmentParam);
   }, [segmentParam]);
-
-  useEffect(
-    () => () => {
-      if (savedTimer.current) clearTimeout(savedTimer.current);
-    },
-    [],
-  );
 
   const stampedIds = useMemo(() => new Set(Object.keys(visits)), [visits]);
   const count = stampedIds.size;
@@ -94,22 +87,15 @@ export default function BookletScreen() {
     return months;
   }, [visits]);
 
-  const streakWeeks = useMemo(() => {
-    const weeks = new Set(
+  /** Longest run of consecutive DAYS with at least one stamp. */
+  const streakDays = useMemo(() => {
+    const days = new Set(
       Object.values(visits).map((v) => {
         const d = new Date(v.stampedAt);
-        const onejan = new Date(d.getFullYear(), 0, 1);
-        const week = Math.ceil(((d.getTime() - onejan.getTime()) / 86400000 + onejan.getDay() + 1) / 7);
-        return `${d.getFullYear()}-${week}`;
+        return Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()) / 86400000;
       }),
     );
-    // longest run of consecutive weeks
-    const sorted = [...weeks]
-      .map((w) => {
-        const [y, wk] = w.split('-').map(Number);
-        return y * 53 + wk;
-      })
-      .sort((a, b) => a - b);
+    const sorted = [...days].sort((a, b) => a - b);
     let best = 0;
     let run = 0;
     for (let i = 0; i < sorted.length; i++) {
@@ -119,10 +105,33 @@ export default function BookletScreen() {
     return best;
   }, [visits]);
 
+  /** Last six months for the chart, oldest first, with a friendly scale. */
+  const monthData = useMemo(() => {
+    const now = new Date();
+    const months = Array.from({ length: 6 }).map((_, i) => {
+      // Anchor to the 1st: setMonth() on a 29th–31st overflows into the next
+      // month when the target month is shorter, which duplicated columns.
+      const d = new Date(now.getFullYear(), now.getMonth() - (5 - i), 1);
+      const key = `${d.getFullYear()}-${d.getMonth()}`;
+      return { key, date: d, n: monthlyCounts[key] ?? 0 };
+    });
+    const maxN = Math.max(1, ...months.map((m) => m.n));
+    const step = Math.max(1, Math.ceil(maxN / 3));
+    const ticks = [0, step, step * 2, step * 3];
+    return { months, ticks, maxTick: step * 3 };
+  }, [monthlyCounts]);
+
   // Skip photos whose cache files the OS already deleted — a stale URI
   // renders as a blank Image and used to leave Wrapped cards empty.
+  // resolvePhotoUri re-anchors persisted URIs to the current app container
+  // (the iOS container path changes on app updates).
   const allPhotos = useMemo(
-    () => Object.values(visits).flatMap((v) => photoUris(v)).filter(photoExists),
+    () =>
+      Object.values(visits).flatMap((v) =>
+        photoUris(v)
+          .filter(photoExists)
+          .map((uri) => ({ uri: resolvePhotoUri(uri), parkId: v.parkId })),
+      ),
     [visits],
   );
 
@@ -163,21 +172,6 @@ export default function BookletScreen() {
       message: `${count}/${TOTAL_PARKS} ${t('parksExplored')} · ${distanceTotal.toFixed(0)} ${t('kmWalked')} · ${t('appName')}`,
     });
   }, [count, distanceTotal, t]);
-
-  const handleSaveToPhotos = useCallback(async () => {
-    try {
-      const uri = await shotRefs.current[activeCard]?.capture();
-      if (!uri) return;
-      const permission = await MediaLibrary.requestPermissionsAsync();
-      if (!permission.granted) return;
-      await MediaLibrary.saveToLibraryAsync(uri);
-      setJustSaved(true);
-      if (savedTimer.current) clearTimeout(savedTimer.current);
-      savedTimer.current = setTimeout(() => setJustSaved(false), 2000);
-    } catch {
-      // capture or save failed — leave the button as-is
-    }
-  }, [activeCard]);
 
   const handleShare = useCallback(async () => {
     try {
@@ -278,8 +272,10 @@ export default function BookletScreen() {
             <PillButton label={t('findFirstPark')} onPress={() => router.navigate('/(tabs)')} />
           </View>
         ) : (
-          <ScrollView contentContainerStyle={{ padding: spacing.md, paddingBottom: 30 }}>
-            <View style={styles.galleryCard}>
+          // Badges stay pinned below; only the stamps inside the light card scroll
+          <View style={{ flex: 1, padding: spacing.md, paddingBottom: 12 }}>
+            <View style={[styles.galleryCard, { flex: 1 }]}>
+              <ScrollView contentContainerStyle={{ padding: spacing.md }} showsVerticalScrollIndicator={false}>
               <View style={styles.galleryGrid}>
                 {parks.map((p) => {
                   const stamped = stampedIds.has(p.id);
@@ -317,8 +313,9 @@ export default function BookletScreen() {
                   );
                 })}
               </View>
+              </ScrollView>
             </View>
-            <SectionLabel color={ground.text} style={{ marginTop: spacing.lg }}>
+            <SectionLabel color={ground.text} style={{ marginTop: spacing.md }}>
               {t('categoryBadges')}
             </SectionLabel>
             <View style={styles.badgeRow}>
@@ -330,7 +327,7 @@ export default function BookletScreen() {
                 </View>
               ))}
             </View>
-          </ScrollView>
+          </View>
         )
       ) : null}
 
@@ -348,29 +345,53 @@ export default function BookletScreen() {
           </View>
           <View style={styles.statCardWide}>
             <SectionLabel color={ground.text}>{t('parksPerMonth')}</SectionLabel>
-            <View style={styles.monthChart}>
-              {Array.from({ length: 6 }).map((_, i) => {
-                const d = new Date();
-                d.setMonth(d.getMonth() - (5 - i));
-                const key = `${d.getFullYear()}-${d.getMonth()}`;
-                const n = monthlyCounts[key] ?? 0;
-                const max = Math.max(1, ...Object.values(monthlyCounts));
-                return (
-                  <View key={key} style={styles.monthCol}>
-                    <View style={[styles.monthBar, { height: 8 + (n / max) * 80 }]} />
-                    <Text style={styles.monthLabel}>
-                      {d.toLocaleDateString(lang === 'pl' ? 'pl-PL' : 'en-GB', { month: 'short' })}
-                    </Text>
+            <View style={styles.chartRow}>
+              {/* y-axis scale */}
+              <View style={styles.yAxis}>
+                {monthData.ticks.map((tk) => (
+                  <Text key={tk} style={[styles.yTick, { bottom: (tk / monthData.maxTick) * CHART_H - 7 }]}>
+                    {tk}
+                  </Text>
+                ))}
+              </View>
+              <View style={{ flex: 1 }}>
+                <View style={styles.plot}>
+                  {/* horizontal gridlines at each y value */}
+                  {monthData.ticks.map((tk) => (
+                    <View
+                      key={tk}
+                      style={[styles.gridline, { bottom: (tk / monthData.maxTick) * CHART_H }]}
+                    />
+                  ))}
+                  <View style={styles.barsRow}>
+                    {monthData.months.map((m) => (
+                      <View key={m.key} style={styles.monthCol}>
+                        <View
+                          style={[
+                            styles.monthBar,
+                            { height: Math.max(3, (m.n / monthData.maxTick) * CHART_H) },
+                            m.n === 0 && { opacity: 0.35 },
+                          ]}
+                        />
+                      </View>
+                    ))}
                   </View>
-                );
-              })}
+                </View>
+                <View style={styles.monthLabelRow}>
+                  {monthData.months.map((m) => (
+                    <Text key={m.key} style={styles.monthLabel}>
+                      {m.date.toLocaleDateString(localeTag(lang), { month: 'short' })}
+                    </Text>
+                  ))}
+                </View>
+              </View>
             </View>
           </View>
           <View style={styles.statCardWide}>
             <View style={styles.statRowInner}>
-              <Text style={styles.statNumber}>{streakWeeks}</Text>
+              <Text style={styles.statNumber}>{streakDays}</Text>
               <Text style={[styles.statLabel, { flex: 1, paddingRight: spacing.sm }]}>
-                {t('longestStreak')} ({t('weeks')})
+                {t('longestStreak')} ({t('days')})
               </Text>
             </View>
           </View>
@@ -437,14 +458,8 @@ export default function BookletScreen() {
                 />
               ))}
             </View>
-            <View style={{ flexDirection: 'row', gap: 12, paddingHorizontal: spacing.md }}>
-              <PillButton
-                label={justSaved ? t('savedToPhotos') : t('saveToPhotos')}
-                variant="outline"
-                style={{ flex: 1 }}
-                onPress={handleSaveToPhotos}
-              />
-              <PillButton label={t('shareCard')} style={{ flex: 1 }} onPress={handleShare} />
+            <View style={{ paddingHorizontal: spacing.md }}>
+              <PillButton label={t('shareCard')} onPress={handleShare} />
             </View>
           </ScrollView>
         )
@@ -482,7 +497,9 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   empty: { alignItems: 'center', gap: 16, marginTop: 60, paddingHorizontal: 44 },
-  galleryCard: { backgroundColor: ground.surfaceLight, borderRadius: radii.lg, padding: spacing.md },
+  // Padding lives on the scroll content, not the card — the card's rounded
+  // edge is what clips the scrolling stamps.
+  galleryCard: { backgroundColor: ground.surfaceLight, borderRadius: radii.lg, overflow: 'hidden' },
   galleryGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -515,10 +532,38 @@ const styles = StyleSheet.create({
   pageDotActive: { width: 20, backgroundColor: ground.accent },
   statNumber: { fontFamily: fonts.heading, fontSize: 40, color: ground.text },
   statLabel: { fontFamily: fonts.body, fontSize: 14.5, color: ground.textMuted, textAlign: 'center' },
-  monthChart: { flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'space-around', height: 120 },
-  monthCol: { alignItems: 'center', gap: 6 },
-  monthBar: { width: 22, borderRadius: 8, backgroundColor: ground.accent },
-  monthLabel: { fontFamily: fonts.body, fontSize: 12.5, color: ground.textMuted },
+  chartRow: { flexDirection: 'row', gap: 8, marginTop: 4 },
+  yAxis: { width: 22, height: CHART_H },
+  yTick: {
+    position: 'absolute',
+    right: 0,
+    fontFamily: fonts.bodySemi,
+    fontSize: 11,
+    color: ground.textMuted,
+    textAlign: 'right',
+  },
+  plot: { height: CHART_H },
+  gridline: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    height: 1,
+    backgroundColor: 'rgba(32,30,29,0.10)',
+  },
+  barsRow: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    justifyContent: 'space-around',
+  },
+  monthCol: { flex: 1, alignItems: 'center' },
+  monthBar: { width: 20, borderRadius: 7, backgroundColor: ground.accent },
+  monthLabelRow: { flexDirection: 'row', marginTop: 6 },
+  monthLabel: { flex: 1, textAlign: 'center', fontFamily: fonts.body, fontSize: 12.5, color: ground.textMuted },
   justUnlockedChip: {
     backgroundColor: ground.accentTint,
     borderRadius: radii.pill,

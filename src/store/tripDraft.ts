@@ -9,6 +9,8 @@ import { TransportMode } from '@/store';
  * Shared between the route tab and the point-picker / hand-picker modals.
  */
 
+export type TripScope = 'quick' | 'custom';
+
 export interface TripPoint {
   lat: number;
   lng: number;
@@ -22,8 +24,12 @@ interface TripDraftState {
   start: TripPoint | null;
   end: TripPoint | null;
   roundTrip: boolean;
-  /** How many parks the engine should pick along the way. */
-  autoCount: number;
+  /**
+   * How many parks the engine should pick along the way, kept per scope: a
+   * quick trip is all auto-picks, while a custom trip auto-fills *around*
+   * hand-picks, so 0 there means "only the parks I chose myself".
+   */
+  autoCount: Record<TripScope, number>;
   /** Hand-picked park ids — locked, auto-fill never drops them. */
   lockedIds: string[];
   /** Auto-picks the user removed with ×; the engine won't re-pick them. */
@@ -38,7 +44,7 @@ interface TripDraftState {
   setStart: (p: TripPoint | null) => void;
   setEnd: (p: TripPoint | null) => void;
   setRoundTrip: (on: boolean) => void;
-  setAutoCount: (n: number) => void;
+  setAutoCount: (scope: TripScope, n: number) => void;
   setMode: (m: TransportMode) => void;
   toggleLocked: (parkId: string) => void;
   clearLocked: () => void;
@@ -53,8 +59,9 @@ interface TripDraftState {
 const initial = {
   start: null,
   end: null,
-  roundTrip: false,
-  autoCount: 4,
+  // Loop from where you stand is the default outing (design 1m).
+  roundTrip: true,
+  autoCount: { quick: 6, custom: 0 } as Record<TripScope, number>,
   lockedIds: [] as string[],
   excludedIds: [] as string[],
   swaps: [] as AutoSwap[],
@@ -68,7 +75,11 @@ export const useTripDraft = create<TripDraftState>()((set) => ({
   setStart: (start) => set({ start }),
   setEnd: (end) => set({ end }),
   setRoundTrip: (roundTrip) => set({ roundTrip }),
-  setAutoCount: (autoCount) => set({ autoCount: Math.max(0, Math.min(12, autoCount)) }),
+  // Bounds live in the route screen: it knows the visit log (upper cap) and
+  // the scope (a quick trip needs ≥ 1 park, a custom one can be hand-picks
+  // only). Here we only refuse a negative count.
+  setAutoCount: (scope, n) =>
+    set((s) => ({ autoCount: { ...s.autoCount, [scope]: Math.max(0, n) } })),
   setMode: (mode) => set({ mode }),
   toggleLocked: (parkId) =>
     set((s) => ({

@@ -1,8 +1,8 @@
 import * as Haptics from 'expo-haptics';
 import * as Location from 'expo-location';
 import * as Notifications from 'expo-notifications';
-import { useRouter } from 'expo-router';
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { useFocusEffect, useRouter } from 'expo-router';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Animated as RNAnimated,
   Linking,
@@ -25,26 +25,48 @@ import { SnapBottomSheet } from '@/components/SnapBottomSheet';
 import { StampView } from '@/components/StampView';
 import { TripPicker } from '@/components/TripPicker';
 import { TripPointPicker } from '@/components/TripPointPicker';
-import { Body, Card, Dialog, Heading, PillButton, SectionLabel, StampRing } from '@/components/ui';
+import { Body, Card, Dialog, Heading, PillButton, SectionLabel } from '@/components/ui';
 import { distanceKm, KRAKOW_CENTER, Park, parkById, parks } from '@/data/parks';
 import { useOnline } from '@/hooks/useOnline';
 import { useUserLocation } from '@/hooks/useUserLocation';
 import { useI18n } from '@/i18n';
 import { TransportMode, useAppStore } from '@/store';
 import { TripPoint, useTripDraft } from '@/store/tripDraft';
-import { buildTrip, diffAutoPicks, tripLegs, tripMinutes } from '@/lib/corridor';
+import { buildTrip, diffAutoPicks, TripPlan, tripLegs, tripMinutes } from '@/lib/corridor';
 import {
   requestNotifPermission,
   startBackgroundFollowing,
   stopBackgroundFollowing,
 } from '@/lib/followingLocation';
 import { fetchRouteGeometry, LngLatCoord } from '@/lib/routing';
-import { chunkDays, orderParks, relegLegs } from '@/lib/tsp';
+import { relegLegs } from '@/lib/tsp';
 import { categories, fonts, ground, radii, spacing } from '@/theme/tokens';
 
 const ARRIVAL_RADIUS_KM = 0.18;
 
 type Phase = 'setup' | 'computing' | 'preview' | 'result' | 'complete';
+
+/**
+ * Completion fan — the real stamps just collected, laid out like cards on a
+ * table. One row per possible count so a single stamp still reads as the hero
+ * and three stay legible; within a row the last slot draws on top, so the
+ * freshest stamp lands in front.
+ */
+const STAMP_FAN: { dx: number; rotation: number; size: number; delay: number }[][] = [
+  [{ dx: 0, rotation: -5, size: 150, delay: 0 }],
+  [
+    { dx: -44, rotation: -11, size: 128, delay: 0 },
+    { dx: 44, rotation: 8, size: 128, delay: 110 },
+  ],
+  [
+    { dx: -84, rotation: -13, size: 112, delay: 0 },
+    { dx: 84, rotation: 11, size: 112, delay: 110 },
+    { dx: 0, rotation: -3, size: 136, delay: 220 },
+  ],
+];
+
+/** Stand-in while no live plan is needed (quick trips build theirs on demand). */
+const EMPTY_PLAN: TripPlan = { stops: [], autoIds: [], totalKm: 0, directKm: 0, extraKm: 0 };
 
 function navigateNative(park: Park, mode: TransportMode) {
   const flag = mode === 'walk' ? 'w' : mode === 'bike' ? 'b' : 'r';
@@ -73,30 +95,38 @@ export default function RouteScreen() {
   const stampPark = useAppStore((s) => s.stamp);
 
   const [phase, setPhase] = useState<Phase>(activeRoute ? 'result' : 'setup');
-  const [scope, setScope] = useState<'all' | 'custom'>('all');
+  const [scope, setScope] = useState<'quick' | 'custom'>('quick');
   const [mode, setMode] = useState<TransportMode>('walk');
-  const [daySize, setDaySize] = useState(6);
-  const [dayIndex, setDayIndex] = useState(0);
-  const [days, setDays] = useState<ReturnType<typeof chunkDays>>([]);
   const [primerVisible, setPrimerVisible] = useState(false);
   const [notifPrimerVisible, setNotifPrimerVisible] = useState(false);
   const [stopVisible, setStopVisible] = useState(false);
   const [arrivalPark, setArrivalPark] = useState<Park | null>(null);
-  const [start, setStart] = useState<{ lat: number; lng: number; label: string } | null>(null);
   const [offlineNote, setOfflineNote] = useState(false);
   const [routeGeometry, setRouteGeometry] = useState<LngLatCoord[] | null>(null);
   const [previewGeometry, setPreviewGeometry] = useState<LngLatCoord[] | null>(null);
   /** Which point the TripPointPicker is editing. */
-  const [pointPicking, setPointPicking] = useState<'start' | 'end' | 'allStart' | null>(null);
+  const [pointPicking, setPointPicking] = useState<'start' | 'end' | null>(null);
   const [tripPickerVisible, setTripPickerVisible] = useState(false);
   /** Sheet position (0 = expanded … range = collapsed); the map follows it. */
   const sheetY = useRef(new RNAnimated.Value(0)).current;
   const watcher = useRef<Location.LocationSubscription | null>(null);
 
   const stampedIds = useMemo(() => new Set(Object.keys(visits)), [visits]);
+  /**
+   * Newest stamps first — the completion fan falls back to these for the
+   * whole-challenge "all done" state, which has no active route to read.
+   */
+  const recentStampIds = useMemo(
+    () =>
+      Object.values(visits)
+        .sort((a, b) => new Date(b.stampedAt).getTime() - new Date(a.stampedAt).getTime())
+        .slice(0, 3)
+        .map((v) => v.parkId),
+    [visits],
+  );
   const remaining = useMemo(() => parks.filter((p) => !stampedIds.has(p.id)), [stampedIds]);
   const origin = userLoc ?? KRAKOW_CENTER;
-  const startPoint = start ? { lat: start.lat, lng: start.lng } : origin;
+  const startPoint = origin;
 
   // ---- custom trip draft (design 3a–3e) ----
   const draft = useTripDraft();
@@ -111,30 +141,50 @@ export default function RouteScreen() {
   const tripEndEff: TripPoint = tripEnd ?? tripStart;
   const isLoop = draft.roundTrip || !draft.end;
 
+  /**
+   * Stepper bounds: never more parks than are left to stamp. A quick trip is
+   * nothing but auto-picks so it needs at least one; a custom trip auto-fills
+   * around hand-picks, where 0 is a legitimate "just my picks" trip.
+   * `remaining` is empty on a finished challenge, hence the Math.max — the
+   * bounds must never invert.
+   */
+  const minAutoCount = scope === 'custom' ? 0 : 1;
+  const maxAutoCount = Math.max(minAutoCount, remaining.length);
+  const autoCount = Math.min(Math.max(draft.autoCount[scope], minAutoCount), maxAutoCount);
+
   const lockedParks = useMemo(
     () => draft.lockedIds.map((id) => parkById(id)).filter((p): p is Park => !!p),
     [draft.lockedIds],
   );
 
-  /** Live corridor plan — haversine-based, cheap enough to recompute inline. */
+  /**
+   * Live corridor plan — haversine-based, cheap enough to recompute inline.
+   * Custom trips only: their setup screen shows a live km/detour summary and
+   * the preview is built from it. Quick trips build their own plan when the
+   * user hits Generate, so computing here would just make every stepper tap
+   * re-run buildTrip for a result nothing reads.
+   */
   const plan = useMemo(
     () =>
-      buildTrip(
-        tripStart,
-        tripEndEff,
-        lockedParks,
-        draft.autoCount,
-        remaining,
-        new Set(draft.excludedIds),
-      ),
+      scope === 'custom'
+        ? buildTrip(
+            tripStart,
+            tripEndEff,
+            lockedParks,
+            autoCount,
+            remaining,
+            new Set(draft.excludedIds),
+          )
+        : EMPTY_PLAN,
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [
+      scope,
       tripStart.lat,
       tripStart.lng,
       tripEndEff.lat,
       tripEndEff.lng,
       lockedParks,
-      draft.autoCount,
+      autoCount,
       draft.excludedIds,
       remaining,
     ],
@@ -207,40 +257,38 @@ export default function RouteScreen() {
     [remaining, origin],
   );
 
-  // ---- generation ----
-  const runGenerate = (
-    targets: Park[],
-    opts?: {
-      mode?: TransportMode;
-      dayIndex?: number;
-      dayCount?: number;
-      start?: { lat: number; lng: number };
-    },
-  ) => {
-    const m = opts?.mode ?? mode;
-    const from = opts?.start ?? startPoint;
-    setOfflineNote(!online && (m === 'walk' || m === 'bike'));
+  // ---- generation: Quick trip = one self-contained outing (design 1m) ----
+  const generateQuick = () => {
+    setOfflineNote(!online && (mode === 'walk' || mode === 'bike'));
     setPhase('computing');
     setTimeout(() => {
-      const legs = orderParks(from, targets, m);
-      const chunked = chunkDays(legs, daySize);
-      setDays(chunked);
-      const di = opts?.dayIndex ?? 0;
-      setDayIndex(di);
+      const quickPlan = buildTrip(
+        tripStart,
+        tripEndEff,
+        [],
+        autoCount,
+        remaining,
+        new Set(draft.excludedIds),
+      );
+      const { legs } = tripLegs(tripStart, quickPlan.stops, tripEndEff, mode);
       setActiveRoute({
-        mode: m,
-        legs: (chunked[0] ?? []).map((l) => ({
+        mode,
+        kind: 'quick',
+        legs: legs.map((l) => ({
           parkId: l.park.id,
           distanceKm: l.distanceKm,
           durationMin: l.durationMin,
           done: false,
         })),
-        dayIndex: di,
-        dayCount: opts?.dayCount ?? chunked.length,
+        dayIndex: 0,
+        dayCount: 1,
         following: false,
         trackingEnabled: false,
+        startPoint: { lat: tripStart.lat, lng: tripStart.lng, label: tripStart.label },
+        endPoint: { lat: tripEndEff.lat, lng: tripEndEff.lng, label: tripEndEff.label },
+        roundTrip: isLoop,
       });
-      setPhase(targets.length === 0 ? 'complete' : 'result');
+      setPhase(quickPlan.stops.length === 0 ? 'complete' : 'result');
     }, 900);
   };
 
@@ -249,7 +297,7 @@ export default function RouteScreen() {
       openPreview();
       return;
     }
-    runGenerate(remaining);
+    generateQuick();
   };
 
   // ---- custom trip flow (design 3a–3c) ----
@@ -261,13 +309,13 @@ export default function RouteScreen() {
   /** × on an auto-pick: drop it without a replacement (stepper −1). */
   const removeAutoPick = (parkId: string) => {
     draft.excludeAuto(parkId);
-    draft.setAutoCount(draft.autoCount - 1);
+    draft.setAutoCount(scope, autoCount - 1);
   };
 
   /** Undo a swap: the old park comes back locked; one auto slot is used up. */
   const undoSwap = (swap: (typeof draft.swaps)[number]) => {
     draft.undoSwap(swap);
-    draft.setAutoCount(draft.autoCount - 1);
+    draft.setAutoCount(scope, autoCount - 1);
   };
 
   const saveTrip = () => {
@@ -275,6 +323,7 @@ export default function RouteScreen() {
     setOfflineNote(!online && (mode === 'walk' || mode === 'bike'));
     setActiveRoute({
       mode,
+      kind: 'custom',
       legs: legs.map((l) => ({
         parkId: l.park.id,
         distanceKm: l.distanceKm,
@@ -293,45 +342,32 @@ export default function RouteScreen() {
   };
 
   const reoptimise = () => {
-    if (activeRoute?.endPoint) {
-      // Custom trip: re-order the same stops between the fixed anchors.
-      const stopParks = activeRoute.legs
-        .map((l) => parkById(l.parkId))
-        .filter((p): p is Park => !!p);
-      const doneById = Object.fromEntries(activeRoute.legs.map((l) => [l.parkId, l.done]));
-      const startP = activeRoute.startPoint ?? startPoint;
-      const replanned = buildTrip(startP, activeRoute.endPoint, stopParks, 0, [], new Set());
-      const { legs } = tripLegs(startP, replanned.stops, activeRoute.endPoint, activeRoute.mode);
-      setActiveRoute({
-        ...activeRoute,
-        legs: legs.map((l) => ({
-          parkId: l.park.id,
-          distanceKm: l.distanceKm,
-          durationMin: l.durationMin,
-          done: !!doneById[l.park.id],
-        })),
-      });
-      return;
-    }
-    runGenerate(remaining);
+    if (!activeRoute) return;
+    // Re-order the same stops between the trip anchors; legacy routes
+    // without anchors are treated as a loop from the start point.
+    const stopParks = activeRoute.legs
+      .map((l) => parkById(l.parkId))
+      .filter((p): p is Park => !!p);
+    const doneById = Object.fromEntries(activeRoute.legs.map((l) => [l.parkId, l.done]));
+    const startP = activeRoute.startPoint ?? startPoint;
+    const endP = activeRoute.endPoint ?? { lat: startP.lat, lng: startP.lng, label: '' };
+    const replanned = buildTrip(startP, endP, stopParks, 0, [], new Set());
+    const { legs } = tripLegs(startP, replanned.stops, endP, activeRoute.mode);
+    setActiveRoute({
+      ...activeRoute,
+      legs: legs.map((l) => ({
+        parkId: l.park.id,
+        distanceKm: l.distanceKm,
+        durationMin: l.durationMin,
+        done: !!doneById[l.park.id],
+      })),
+    });
   };
 
   const handlePointPicked = (point: TripPoint) => {
     if (pointPicking === 'start') draft.setStart(point);
     else if (pointPicking === 'end') draft.setEnd(point);
-    else if (pointPicking === 'allStart') setStart({ lat: point.lat, lng: point.lng, label: point.label });
     setPointPicking(null);
-  };
-
-  // ---- day advancement ----
-  const startNextDay = () => {
-    if (!activeRoute) return;
-    runGenerate(remaining, {
-      mode: activeRoute.mode,
-      dayIndex: activeRoute.dayIndex + 1,
-      dayCount: activeRoute.dayCount,
-      start: origin,
-    });
   };
 
   // ---- leg reorder / remove (recompute distances sequentially from start) ----
@@ -445,26 +481,46 @@ export default function RouteScreen() {
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     setArrivalPark(null);
     // Full-screen stamp celebration (shared with park detail); it hands off
-    // to the milestone screen itself. Route completion is handled by the
-    // watcher effect when we return.
+    // to the milestone screen itself. Route completion swaps in when this
+    // tab regains focus afterwards.
     router.push({ pathname: '/stamp-success', params: { parkId } });
   };
 
-  // When every leg is done (arrival stamps or manual check-ins), end
-  // following and show the completion state.
+  const routeFinished =
+    !!activeRoute && activeRoute.legs.length > 0 && activeRoute.legs.every((l) => l.done);
+
+  // Every leg done (arrival stamps or manual check-ins) — stop following right
+  // away; there is nothing left to watch for.
   useEffect(() => {
-    if (
-      phase === 'result' &&
-      activeRoute &&
-      activeRoute.legs.length > 0 &&
-      activeRoute.legs.every((l) => l.done)
-    ) {
+    if (phase === 'result' && routeFinished) {
       setFollowing(false);
       stopBackgroundFollowing();
-      setPhase('complete');
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [phase, activeRoute?.legs]);
+  }, [phase, routeFinished]);
+
+  /**
+   * The completion celebration must land *after* the per-park one, never
+   * underneath it: stamping the last park marks the leg done and pushes
+   * /stamp-success from the same handler, and flipping the phase in a plain
+   * effect flashed "Route complete!" under the push. Any render-time gate is
+   * unreliable here — the tab still reads as focused in that render, and once
+   * covered it may not render at all until it is uncovered. So the flip only
+   * ever happens on a focus transition: the stamp screen (and any milestone /
+   * park detail) plays out first, and coming back to this tab celebrates the
+   * route. Mount counts as a focus transition, which also covers relaunching
+   * the app with an already-finished route.
+   */
+  const completionPending = phase === 'result' && routeFinished;
+  const completionPendingRef = useRef(completionPending);
+  useEffect(() => {
+    completionPendingRef.current = completionPending;
+  }, [completionPending]);
+  useFocusEffect(
+    useCallback(() => {
+      if (completionPendingRef.current) setPhase('complete');
+    }, []),
+  );
 
   const manualArrived = (parkId: string) => {
     const park = parkById(parkId);
@@ -489,39 +545,38 @@ export default function RouteScreen() {
   if (phase === 'complete' || (remaining.length === 0 && phase === 'setup')) {
     const doneLegs = activeRoute?.legs.filter((l) => l.done) ?? [];
     const dayKm = doneLegs.reduce((a, l) => a + l.distanceKm, 0);
-    const canNextDay =
-      remaining.length > 0 &&
-      !!activeRoute &&
-      activeRoute.legs.length > 0 &&
-      activeRoute.legs.every((l) => l.done) &&
-      activeRoute.dayIndex + 1 < activeRoute.dayCount;
+    // The stamps this route actually earned, in visiting order (freshest last,
+    // so it fans in on top); at most the three the fan has room for.
+    const fanIds = (
+      doneLegs.length > 0 ? doneLegs.map((l) => l.parkId) : [...recentStampIds].reverse()
+    ).slice(-3);
+    const fan = STAMP_FAN[fanIds.length - 1] ?? [];
     return (
       <View style={[styles.center, { backgroundColor: categories.forest.tint }]}>
         {/* Spec: popin + confetti fall on the completion moment */}
         <ConfettiRain count={26} duration={3600} />
-        <PopIn duration={1000}>
-          <StampRing size={140} color={categories.forest.ink} filled />
-        </PopIn>
+        <View style={styles.completeStage}>
+          {fan.map((slot, i) => (
+            <View key={fanIds[i]} style={styles.completeStampSlot}>
+              <PopIn duration={1000} delay={slot.delay}>
+                <View style={{ transform: [{ translateX: slot.dx }] }}>
+                  <StampView parkId={fanIds[i]} size={slot.size} stamped rotation={slot.rotation} />
+                </View>
+              </PopIn>
+            </View>
+          ))}
+        </View>
         <Heading style={{ fontSize: 34, textAlign: 'center' }}>
-          {remaining.length === 0 ? t('allDone') : canNextDay ? t('dayComplete') : t('routeCompleteTitle')}
+          {remaining.length === 0 ? t('allDone') : t('routeCompleteTitle')}
         </Heading>
         {doneLegs.length > 0 ? (
           <Body style={{ textAlign: 'center', color: categories.forest.deep, fontSize: 17 }}>
             {doneLegs.length} {t('parks')} · +{dayKm.toFixed(1)} km {t('legDistanceAdded')}
           </Body>
         ) : null}
-        {canNextDay ? (
-          <PillButton
-            label={t('nextDay')}
-            color={categories.forest.ink}
-            style={{ alignSelf: 'stretch' }}
-            onPress={startNextDay}
-          />
-        ) : null}
         <PillButton
           label={t('done')}
           color={categories.forest.ink}
-          variant={canNextDay ? 'ghost' : 'primary'}
           style={{ alignSelf: 'stretch' }}
           onPress={() => {
             stopBackgroundFollowing();
@@ -714,7 +769,7 @@ export default function RouteScreen() {
         </RNAnimated.View>
         <View style={[styles.dayBadge, { top: insets.top + 8 }]}>
           <Text style={styles.dayBadgeText}>
-            {t('day')} {activeRoute.dayIndex + 1} {t('of')} {activeRoute.dayCount} · {modeLabel.toLowerCase()}
+            {t(activeRoute.kind === 'custom' ? 'customTrip' : 'quickTrip')} · {modeLabel.toLowerCase()}
           </Text>
         </View>
 
@@ -844,7 +899,7 @@ export default function RouteScreen() {
               <>
                 <PillButton label={t('startRoute')} style={{ flex: 2 }} onPress={startFollowing} />
                 <PillButton
-                  label={t('endRoute')}
+                  label={t('cancel')}
                   variant="ghost"
                   style={{ flex: 1 }}
                   onPress={() => {
@@ -938,12 +993,12 @@ export default function RouteScreen() {
       <View style={styles.scopeRow}>
         <Pressable
           accessibilityRole="button"
-          accessibilityState={{ selected: scope === 'all' }}
-          onPress={() => setScope('all')}
-          style={[styles.scopeCard, scope === 'all' && styles.scopeCardActive]}
+          accessibilityState={{ selected: scope === 'quick' }}
+          onPress={() => setScope('quick')}
+          style={[styles.scopeCard, scope === 'quick' && styles.scopeCardActive]}
         >
-          <Text style={styles.scopeTitle}>{t('allRemaining')}</Text>
-          <Text style={styles.scopeSub}>{t('allRemainingSub', { n: remaining.length })}</Text>
+          <Text style={styles.scopeTitle}>{t('quickTrip')}</Text>
+          <Text style={styles.scopeSub}>{t('quickTripSub', { n: remaining.length })}</Text>
         </Pressable>
         <Pressable
           accessibilityRole="button"
@@ -956,9 +1011,30 @@ export default function RouteScreen() {
         </Pressable>
       </View>
 
-      {scope === 'custom' ? (
-        <>
-          {/* Start/end block with the dashed thread (design 3a/3b) */}
+      {/* Transit is hidden until timetable routing can be trusted (ZTP GTFS
+          backend, okp-routing-backend-plan.md) — walk & bike only for now. */}
+      <SectionLabel color={ground.text}>{t('transportMode')}</SectionLabel>
+      <View style={styles.modeRow}>
+        {(
+          [
+            ['walk', t('walking')],
+            ['bike', t('cycling')],
+          ] as [TransportMode, string][]
+        ).map(([m, label]) => (
+          <Pressable
+            key={m}
+            accessibilityRole="button"
+            accessibilityState={{ selected: mode === m }}
+            onPress={() => setMode(m)}
+            style={[styles.modeItem, mode === m && styles.modeItemActive]}
+          >
+            <Text style={[styles.modeText, mode === m && styles.modeTextActive]}>{label}</Text>
+          </Pressable>
+        ))}
+      </View>
+
+      <>
+          {/* Start/end block with the dashed thread — shared by both modes (1m/3a/3b) */}
           <View style={styles.pointBlock}>
             <View style={styles.pointRow}>
               {!draft.roundTrip ? (
@@ -1012,7 +1088,9 @@ export default function RouteScreen() {
             <View style={{ flex: 1 }}>
               <Text style={styles.settingTitle}>{t('roundTrip')}</Text>
               <Text style={styles.settingSub}>
-                {draft.roundTrip ? t('roundTripOnSub') : t('roundTripSub')}
+                {draft.roundTrip
+                  ? t(scope === 'quick' ? 'quickRoundTripOnSub' : 'roundTripOnSub')
+                  : t('roundTripSub')}
               </Text>
             </View>
             <Switch
@@ -1028,34 +1106,45 @@ export default function RouteScreen() {
           <View style={styles.srow}>
             <Icon name="stamp" size={20} color={categories.forest.deep} />
             <View style={{ flex: 1 }}>
-              <Text style={styles.settingTitle}>{t('parksAlongWay')}</Text>
+              <Text style={styles.settingTitle}>
+                {t(scope === 'quick' ? 'parksOnTrip' : 'parksAlongWay')}
+              </Text>
               <Text style={styles.settingSub}>
-                {isLoop ? t('parksAlongWayLoopSub') : t('parksAlongWaySub')}
+                {scope === 'quick'
+                  ? t('parksOnTripSub')
+                  : isLoop
+                    ? t('parksAlongWayLoopSub')
+                    : t('parksAlongWaySub')}
               </Text>
             </View>
             <View style={styles.stepper}>
               <Pressable
                 accessibilityRole="button"
                 accessibilityLabel="-"
-                onPress={() => draft.setAutoCount(draft.autoCount - 1)}
-                style={styles.stepBtn}
+                accessibilityState={{ disabled: autoCount <= minAutoCount }}
+                disabled={autoCount <= minAutoCount}
+                onPress={() => draft.setAutoCount(scope, autoCount - 1)}
+                style={[styles.stepBtn, autoCount <= minAutoCount && styles.stepBtnDisabled]}
               >
                 <Text style={styles.stepText}>–</Text>
               </Pressable>
-              <Text style={styles.stepCount}>{draft.autoCount}</Text>
+              <Text style={styles.stepCount}>{autoCount}</Text>
               <Pressable
                 accessibilityRole="button"
                 accessibilityLabel="+"
-                onPress={() => draft.setAutoCount(draft.autoCount + 1)}
-                style={styles.stepBtn}
+                accessibilityState={{ disabled: autoCount >= maxAutoCount }}
+                disabled={autoCount >= maxAutoCount}
+                onPress={() => draft.setAutoCount(scope, Math.min(autoCount + 1, maxAutoCount))}
+                style={[styles.stepBtn, autoCount >= maxAutoCount && styles.stepBtnDisabled]}
               >
                 <Text style={styles.stepText}>+</Text>
               </Pressable>
             </View>
           </View>
 
-          {/* Hand-picker entry */}
-          <View style={styles.srow}>
+          {/* Hand-picker entry — custom trips only */}
+          {scope === 'custom' ? (
+            <View style={styles.srow}>
             <Icon name="pin" size={20} color={categories.forest.deep} />
             <View style={{ flex: 1 }}>
               <Text style={styles.settingTitle}>{t('pickMyself')}</Text>
@@ -1072,115 +1161,44 @@ export default function RouteScreen() {
               style={{ paddingVertical: 8, paddingHorizontal: 16, minHeight: 38 }}
               textStyle={{ fontSize: 14 }}
             />
-          </View>
-        </>
-      ) : null}
-
-      {/* Transit is hidden until timetable routing can be trusted (ZTP GTFS
-          backend, okp-routing-backend-plan.md) — walk & bike only for now. */}
-      <SectionLabel color={ground.text}>{t('transportMode')}</SectionLabel>
-      <View style={styles.modeRow}>
-        {(
-          [
-            ['walk', t('walking')],
-            ['bike', t('cycling')],
-          ] as [TransportMode, string][]
-        ).map(([m, label]) => (
-          <Pressable
-            key={m}
-            accessibilityRole="button"
-            accessibilityState={{ selected: mode === m }}
-            onPress={() => setMode(m)}
-            style={[styles.modeItem, mode === m && styles.modeItemActive]}
-          >
-            <Text style={[styles.modeText, mode === m && styles.modeTextActive]}>{label}</Text>
-          </Pressable>
-        ))}
-      </View>
-
-      {scope === 'all' ? (
-        <>
-          <Card>
-            <View style={styles.settingRow}>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.settingTitle}>{start ? t('startPoint') : t('startCurrent')}</Text>
-                <Text style={styles.settingSub}>{start ? start.label : userLoc ? 'GPS' : 'Kraków'}</Text>
-              </View>
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel={t('change')}
-                hitSlop={8}
-                style={{ minHeight: 44, justifyContent: 'center' }}
-                onPress={() => setPointPicking('allStart')}
-              >
-                <Text style={styles.changeLink}>{t('change')}</Text>
-              </Pressable>
-            </View>
-          </Card>
-
-          <Card>
-            <View style={styles.settingRow}>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.settingTitle}>{t('daySize')}</Text>
-                <Text style={styles.settingSub}>{t('parksPerDay', { n: daySize })}</Text>
-              </View>
-              <View style={styles.stepper}>
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityLabel="-"
-                  onPress={() => setDaySize((d) => Math.max(2, d - 1))}
-                  style={styles.stepBtn}
-                >
-                  <Text style={styles.stepText}>–</Text>
-                </Pressable>
-                <View style={styles.stepDivider} />
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityLabel="+"
-                  onPress={() => setDaySize((d) => Math.min(12, d + 1))}
-                  style={styles.stepBtn}
-                >
-                  <Text style={styles.stepText}>+</Text>
-                </Pressable>
-              </View>
-            </View>
-          </Card>
-
-          {nearbyCount >= 2 ? (
-            <View style={styles.hintBox}>
-              <Body style={{ color: categories.forest.deep }}>
-                {nearbyCount} {t('unstamped').toLowerCase()} · 2 km — {t('tabRoute')} 👣
-              </Body>
             </View>
           ) : null}
-        </>
+      </>
+
+      {/* Nudges: quick surfaces clustering (spec 4.2); custom previews the corridor */}
+      {scope === 'quick' ? (
+        nearbyCount >= 2 ? (
+          <View style={[styles.nudgeBox, { flexDirection: 'row', alignItems: 'center', gap: 10 }]}>
+            <Icon name="pin" size={18} color={categories.forest.deep} />
+            <Body style={{ flex: 1, color: categories.forest.deep, fontSize: 14.5 }}>
+              {t('quickNudge', { n: nearbyCount })}
+            </Body>
+          </View>
+        ) : null
+      ) : isLoop ? (
+        <View style={styles.nudgeBox}>
+          <View style={{ alignItems: 'center' }}>
+            <RouteDoodle width={200} height={100} />
+          </View>
+          <Body style={{ color: categories.forest.deep, textAlign: 'center', fontSize: 14.5 }}>
+            {t('loopPreview', { n: plan.stops.length, km: plan.totalKm.toFixed(1) })}
+          </Body>
+        </View>
       ) : (
-        <>
-          {/* Live sage nudge (3a) / loop preview (3b) */}
-          {isLoop ? (
-            <View style={styles.nudgeBox}>
-              <View style={{ alignItems: 'center' }}>
-                <RouteDoodle width={200} height={100} />
-              </View>
-              <Body style={{ color: categories.forest.deep, textAlign: 'center', fontSize: 14.5 }}>
-                {t('loopPreview', { n: plan.stops.length, km: plan.totalKm.toFixed(1) })}
-              </Body>
-            </View>
-          ) : (
-            <View style={[styles.nudgeBox, { flexDirection: 'row', alignItems: 'center', gap: 10 }]}>
-              <Icon name="pin" size={18} color={categories.forest.deep} />
-              <Body style={{ flex: 1, color: categories.forest.deep, fontSize: 14.5 }}>
-                {t('nudgeFit', { n: plan.autoIds.length, km: plan.extraKm.toFixed(1) })}
-              </Body>
-            </View>
-          )}
-        </>
+        <View style={[styles.nudgeBox, { flexDirection: 'row', alignItems: 'center', gap: 10 }]}>
+          <Icon name="pin" size={18} color={categories.forest.deep} />
+          <Body style={{ flex: 1, color: categories.forest.deep, fontSize: 14.5 }}>
+            {t('nudgeFit', { n: plan.autoIds.length, km: plan.extraKm.toFixed(1) })}
+          </Body>
+        </View>
       )}
 
       <View style={{ flex: 1 }} />
       <PillButton
         label={scope === 'custom' ? t('previewRoute') : t('generateRoute')}
         onPress={generate}
+        // A custom trip with 0 auto-picks and no hand-picks has nothing to preview.
+        disabled={scope === 'custom' && plan.stops.length === 0}
         style={{ marginBottom: insets.bottom + 6 }}
       />
 
@@ -1211,6 +1229,16 @@ export default function RouteScreen() {
 
 const styles = StyleSheet.create({
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 24, padding: spacing.lg },
+  completeStage: { width: 300, height: 170 },
+  completeStampSlot: {
+    position: 'absolute',
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   dayBadge: {
     position: 'absolute',
     left: spacing.md,
@@ -1287,6 +1315,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   stepBtn: { paddingVertical: 10, paddingHorizontal: 18, minWidth: 48, alignItems: 'center' },
+  stepBtnDisabled: { opacity: 0.35 },
   stepText: { fontFamily: fonts.bodyBold, fontSize: 18, color: ground.text },
   stepCount: { fontFamily: fonts.bodyBold, fontSize: 16, color: ground.text, minWidth: 20, textAlign: 'center' },
   stepDivider: { width: 1, height: 22, backgroundColor: 'rgba(32,30,29,0.12)' },

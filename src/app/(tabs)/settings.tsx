@@ -4,18 +4,24 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Body, Heading, PillButton, SectionLabel } from '@/components/ui';
 import { GITHUB_URL, ZZM } from '@/config';
-import { useI18n } from '@/i18n';
+import { localeTag, useI18n } from '@/i18n';
+import { LANGUAGE_LABELS, LANGUAGE_ORDER } from '@/i18n/language';
 import { autoBackupIfEnabled, exportBackup, importBackup, writeLocalBackup } from '@/lib/backup';
+import { exportPhotosToGallery } from '@/lib/photos';
 import { useAppStore } from '@/store';
 import { categories, fonts, ground, radii, spacing } from '@/theme/tokens';
 
 export default function SettingsScreen() {
   const { t, lang } = useI18n();
   const insets = useSafeAreaInsets();
+
   const settings = useAppStore((s) => s.settings);
   const setSettings = useAppStore((s) => s.setSettings);
   const [restored, setRestored] = useState(false);
   const restoredTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [exportingPhotos, setExportingPhotos] = useState(false);
+  const [photosNote, setPhotosNote] = useState<string | null>(null);
+  const photosNoteTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Auto-backup: debounce 3s after visits change, then write the local bundle.
   useEffect(() => {
@@ -36,9 +42,29 @@ export default function SettingsScreen() {
   useEffect(
     () => () => {
       if (restoredTimer.current) clearTimeout(restoredTimer.current);
+      if (photosNoteTimer.current) clearTimeout(photosNoteTimer.current);
     },
     [],
   );
+
+  const handleExportPhotos = async () => {
+    if (exportingPhotos) return;
+    setExportingPhotos(true);
+    try {
+      const saved = await exportPhotosToGallery();
+      setPhotosNote(
+        saved === null
+          ? t('photosPermissionDenied')
+          : saved === 0
+            ? t('noPhotosToExport')
+            : t('photosExported', { count: saved }),
+      );
+      if (photosNoteTimer.current) clearTimeout(photosNoteTimer.current);
+      photosNoteTimer.current = setTimeout(() => setPhotosNote(null), 3000);
+    } finally {
+      setExportingPhotos(false);
+    }
+  };
 
   const handleImport = async () => {
     const ok = await importBackup();
@@ -50,7 +76,7 @@ export default function SettingsScreen() {
 
   const service = Platform.OS === 'ios' ? 'iCloud' : 'Google Drive';
   const lastBackup = settings.lastBackupAt
-    ? new Date(settings.lastBackupAt).toLocaleString(lang === 'pl' ? 'pl-PL' : 'en-GB', {
+    ? new Date(settings.lastBackupAt).toLocaleString(localeTag(lang), {
         hour: '2-digit',
         minute: '2-digit',
         day: 'numeric',
@@ -64,14 +90,11 @@ export default function SettingsScreen() {
 
   const languageLabel =
     settings.language === 'system'
-      ? `${t('systemDefault')} (${lang === 'pl' ? 'Polski' : 'English'})`
-      : settings.language === 'pl'
-        ? 'Polski'
-        : 'English';
+      ? `${t('systemDefault')} (${LANGUAGE_LABELS[lang]})`
+      : LANGUAGE_LABELS[settings.language];
 
   const cycleLanguage = () => {
-    const order: (typeof settings.language)[] = ['system', 'pl', 'en'];
-    const next = order[(order.indexOf(settings.language) + 1) % order.length];
+    const next = LANGUAGE_ORDER[(LANGUAGE_ORDER.indexOf(settings.language) + 1) % LANGUAGE_ORDER.length];
     setSettings({ language: next });
   };
 
@@ -122,6 +145,13 @@ export default function SettingsScreen() {
         />
       </View>
       {restored ? <Text style={styles.restoredNote}>{t('backupRestored')}</Text> : null}
+      <PillButton
+        label={t('exportPhotosToGallery')}
+        variant="outline"
+        disabled={exportingPhotos}
+        onPress={() => void handleExportPhotos()}
+      />
+      {photosNote ? <Text style={styles.restoredNote}>{photosNote}</Text> : null}
 
       <SectionLabel color={ground.text} style={{ marginTop: 8 }}>
         {t('language')}

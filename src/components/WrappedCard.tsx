@@ -15,13 +15,19 @@ import { CategoryId, categories, fonts } from '@/theme/tokens';
 
 export type WrappedVariant = 'summary' | 'memories' | 'map';
 
+export interface WrappedPhoto {
+  uri: string;
+  /** Park the memory was taken at — its stamp is placed on the photo. */
+  parkId: string;
+}
+
 export interface WrappedCardProps {
   variant: WrappedVariant;
   width: number;
   height: number;
   count: number;
   distanceTotal: number;
-  photos: string[];
+  photos: WrappedPhoto[];
   favouriteCategory: CategoryId;
   visitIds: string[];
 }
@@ -30,6 +36,16 @@ export interface WrappedCardProps {
 const CARD_BG = '#5b3a1e';
 const BLOCK_BG = '#6f4a27';
 const KICKER = '#d8bfa5';
+
+/**
+ * Pseudo-random stamp tilt in [-25, 25]°, derived from the photo URI so a
+ * photo keeps the same angle across re-renders and captures.
+ */
+function stampAngle(uri: string): number {
+  let h = 0;
+  for (let i = 0; i < uri.length; i++) h = (h * 31 + uri.charCodeAt(i)) | 0;
+  return (Math.abs(h) % 51) - 25;
+}
 
 /** Bounding box of a park set with padding; enforces a minimum span. */
 function boundsOf(pts: Park[]): [number, number, number, number] {
@@ -157,8 +173,8 @@ export function WrappedCard({
           <Text style={styles.number}>{count}</Text>
           <Text style={styles.label}>{t('parksExplored')}</Text>
           <View style={styles.photoRow}>
-            {photos.slice(0, 2).map((uri) => (
-              <Image key={uri} source={{ uri }} style={styles.photo} resizeMode="cover" />
+            {photos.slice(0, 2).map((p) => (
+              <Image key={p.uri} source={{ uri: p.uri }} style={styles.photo} resizeMode="cover" />
             ))}
             {photos.length === 0 ? (
               <>
@@ -167,17 +183,18 @@ export function WrappedCard({
               </>
             ) : null}
           </View>
-          <View style={styles.metaRow}>
-            <Text style={styles.meta}>
-              {distanceTotal.toFixed(0)} {t('kmWalked')}
-            </Text>
-            <View style={{ alignItems: 'flex-end' }}>
-              <Text style={styles.metaCaption}>{t('favouriteCategory').toUpperCase()}</Text>
-              <Text style={styles.meta}>{t(favouriteCategory)}</Text>
-            </View>
-          </View>
           <View style={{ marginTop: 'auto' }}>
             <ParkDotMap visitIds={visitIds} height={height * 0.24} />
+            {/* One row under the map: distance left, favourite category right */}
+            <View style={[styles.metaRow, { marginTop: 6 }]}>
+              <Text style={styles.meta}>
+                {distanceTotal.toFixed(0)} {t('kmWalked')}
+              </Text>
+              <View style={{ alignItems: 'flex-end' }}>
+                <Text style={styles.metaCaption}>{t('favouriteCategory').toUpperCase()}</Text>
+                <Text style={styles.meta}>{t(favouriteCategory)}</Text>
+              </View>
+            </View>
           </View>
         </>
       ) : null}
@@ -185,18 +202,26 @@ export function WrappedCard({
       {variant === 'memories' ? (
         <>
           <View style={styles.memoryGrid}>
-            {[...new Set(photos)].slice(0, 4).map((uri) => (
-              <Image
-                key={uri}
-                source={{ uri }}
-                // Explicit pixel size — percent+aspectRatio collapsed to
-                // zero height inside the fixed-size card.
-                style={[
-                  styles.memoryPhoto,
-                  { width: (width - 46) / 2, height: (height - 190) / 2 },
-                ]}
-                resizeMode="cover"
-              />
+            {[...new Map(photos.map((p) => [p.uri, p])).values()].slice(0, 4).map((p) => (
+              // Explicit pixel size — percent+aspectRatio collapsed to
+              // zero height inside the fixed-size card.
+              <View
+                key={p.uri}
+                style={{ width: (width - 46) / 2, height: (height - 190) / 2 }}
+              >
+                <Image
+                  source={{ uri: p.uri }}
+                  style={[styles.memoryPhoto, { width: '100%', height: '100%' }]}
+                  resizeMode="cover"
+                />
+                {/* The stamp of the park where the picture was taken */}
+                <View
+                  style={[styles.memoryStamp, { transform: [{ rotate: `${stampAngle(p.uri)}deg` }] }]}
+                  pointerEvents="none"
+                >
+                  <StampView parkId={p.parkId} size={46} stamped whiteTint />
+                </View>
+              </View>
             ))}
           </View>
           <View style={[styles.metaRow, { marginTop: 'auto' }]}>
@@ -234,11 +259,6 @@ export function WrappedCard({
       ) : null}
 
       <Text style={styles.footer}>{t('madeWith')}</Text>
-      {variant === 'memories' && visitIds.length > 0 ? (
-        <View style={styles.cornerStamp} pointerEvents="none">
-          <StampView parkId={visitIds[visitIds.length - 1]} size={54} stamped whiteTint />
-        </View>
-      ) : null}
     </View>
   );
 }
@@ -261,10 +281,15 @@ const styles = StyleSheet.create({
   photoPlaceholder: { backgroundColor: 'rgba(255,255,255,0.22)' },
   memoryGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 8 },
   memoryPhoto: { borderRadius: 12, backgroundColor: 'rgba(255,255,255,0.18)' },
+  // Long Polish strings ("8 odkrytych parków" + "0 km przebyte") must never
+  // collide: the row wraps into stacked lines when one line can't fit both.
   metaRow: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     justifyContent: 'space-between',
     alignItems: 'flex-end',
+    columnGap: 12,
+    rowGap: 3,
     marginTop: 8,
   },
   meta: { fontFamily: fonts.bodyBold, fontSize: 13.5, color: '#fffdf9' },
@@ -290,5 +315,5 @@ const styles = StyleSheet.create({
   catSwatch: { width: 10, height: 10, borderRadius: 5 },
   catName: { flex: 1, fontFamily: fonts.bodySemi, fontSize: 13, color: '#f3e6d5' },
   footer: { fontFamily: fonts.bodyBold, fontSize: 9, color: 'rgba(255,255,255,0.5)', marginTop: 8 },
-  cornerStamp: { position: 'absolute', right: 12, top: 10, opacity: 0.35 },
+  memoryStamp: { position: 'absolute', right: 4, top: 4, opacity: 0.95 },
 });

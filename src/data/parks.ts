@@ -1,4 +1,8 @@
+import { Language } from '@/i18n/translations';
 import { CategoryId } from '@/theme/tokens';
+
+/** Park prose in every supported UI language. */
+export type LocalizedText = Record<Language, string>;
 
 /**
  * The official 78-park list (OKP list revision 2026-07, coordinates as
@@ -11,8 +15,8 @@ export interface Park {
   category: CategoryId;
   lat: number;
   lng: number;
-  history: { en: string; pl: string };
-  access: { en: string; pl: string };
+  history: LocalizedText;
+  access: LocalizedText;
   entrances: number;
 }
 
@@ -102,15 +106,17 @@ const rows: Row[] = [
   ['bulwary-wisly', 'Bulwary Wisły', 'water', 50.0522, 19.9339],
 ];
 
-const detailed: Record<string, { history: { en: string; pl: string }; access: { en: string; pl: string }; entrances: number }> = {
+const detailed: Record<string, { history: LocalizedText; access: LocalizedText; entrances: number }> = {
   'park-im-wojciecha-bednarskiego': {
     history: {
       en: "Founded in 1896 by Wojciech Bednarski inside a former quarry — one of Europe's first parks reclaimed from industrial ground.",
       pl: 'Założony w 1896 r. przez Wojciecha Bednarskiego w dawnym kamieniołomie — jeden z pierwszych w Europie parków na terenie poprzemysłowym.',
+      uk: 'Заснований 1896 року Войцехом Беднарським у колишньому каменярні — один із перших у Європі парків, відвойованих у промислової землі.',
     },
     access: {
       en: '3 entrances · Tram to "Korona"; steep paths from the Podgórze side.',
       pl: '3 wejścia · Tramwaj do „Korony”; strome ścieżki od strony Podgórza.',
+      uk: '3 входи · Трамваєм до «Korona»; круті стежки з боку Подґужа.',
     },
     entrances: 3,
   },
@@ -118,10 +124,12 @@ const detailed: Record<string, { history: { en: string; pl: string }; access: { 
     history: {
       en: "Dug as a flood reservoir for the young Nowa Huta in 1957, the lagoon slowly turned from concrete basin into the district's beloved swimming-and-picnic shore.",
       pl: 'Wykopany w 1957 r. jako zbiornik przeciwpowodziowy młodej Nowej Huty; z betonowej niecki powoli stał się ukochanym kąpieliskiem i miejscem pikników dzielnicy.',
+      uk: 'Викопаний 1957 року як протипаводковий резервуар для молодої Нової Гути, згодом із бетонної чаші поволі перетворився на улюблене місце купання та пікніків усього району.',
     },
     access: {
       en: '2 entrances · Tram 4, 10 → "Struga"; step-free path along the north shore.',
       pl: '2 wejścia · Tramwaj 4, 10 → „Struga”; ścieżka bez schodów wzdłuż północnego brzegu.',
+      uk: '2 входи · Трамваї 4, 10 → «Struga»; стежка без сходів уздовж північного берега.',
     },
     entrances: 2,
   },
@@ -129,10 +137,12 @@ const detailed: Record<string, { history: { en: string; pl: string }; access: { 
     history: {
       en: "Established in 1889 by Dr Henryk Jordan as Europe's first public playground-park — a revolutionary idea that exercise belongs to every child.",
       pl: 'Założony w 1889 r. przez dr. Henryka Jordana jako pierwszy w Europie publiczny park zabaw — rewolucyjna idea ruchu dla każdego dziecka.',
+      uk: 'Заснований 1889 року доктором Генриком Йорданом як перший у Європі публічний парк для дитячих ігор — революційна на той час думка, що рух належить кожній дитині.',
     },
     access: {
       en: '4 entrances · Tram → "Park Jordana"; flat, fully accessible paths.',
       pl: '4 wejścia · Tramwaj → „Park Jordana”; płaskie, w pełni dostępne alejki.',
+      uk: '4 входи · Трамваєм → «Park Jordana»; рівні, повністю доступні алеї.',
     },
     entrances: 4,
   },
@@ -149,23 +159,29 @@ function defaultContent(name: string, category: CategoryId) {
     forest: `Kieszeń leśnego spokoju: w ${name} miasto cichnie między pniami.`,
     water: `Ukształtowany przez wodę ${name} w każdą porę roku gromadzi sąsiadów na swoich brzegach.`,
   }[category];
+  const uk = {
+    historical: `Зелений свідок багатошарового минулого Кракова — ${name} береже історію міста під старими деревами.`,
+    forest: `Кишенька лісового спокою: у ${name} місто стихає поміж стовбурів.`,
+    water: `Сформований водою, ${name} щопори року збирає сусідів на своїх берегах.`,
+  }[category];
   return {
-    history: { en, pl },
+    history: { en, pl, uk },
     access: {
       en: '2 entrances · check the mini-map for the nearest one.',
       pl: '2 wejścia · sprawdź najbliższe na mini-mapie.',
+      uk: '2 входи · знайди найближчий на міні-карті.',
     },
     entrances: 2,
   };
 }
 
 /**
- * Bilingual park descriptions condensed from the official ZZM pages
+ * Park descriptions condensed from the official ZZM pages
  * (zzm.krakow.pl/zzm/parki.html) — see scripts/fetch-zzm-photos.mjs for the
  * matching photo pipeline. Overrides the generic fallback text when present.
  */
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-const parkStories: Record<string, { en: string; pl: string }> = require('./parkStories.json');
+const parkStories: Record<string, LocalizedText> = require('./parkStories.json');
 
 export const parks: Park[] = rows.map(([id, name, category, lat, lng]) => {
   const extra = detailed[id] ?? defaultContent(name, category);

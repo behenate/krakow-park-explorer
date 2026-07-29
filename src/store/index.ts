@@ -3,6 +3,7 @@ import { create } from 'zustand';
 import { createJSONStorage, persist } from 'zustand/middleware';
 
 import { parkById, TOTAL_PARKS } from '@/data/parks';
+import { LanguageSetting } from '@/i18n/language';
 
 export type TransportMode = 'walk' | 'bike' | 'transit';
 
@@ -28,6 +29,8 @@ export interface RouteLeg {
 
 export interface ActiveRoute {
   mode: TransportMode;
+  /** Which planner produced it (design 1m/3a); legacy routes have none. */
+  kind?: 'quick' | 'custom';
   legs: RouteLeg[];
   dayIndex: number;
   dayCount: number;
@@ -41,7 +44,7 @@ export interface ActiveRoute {
 }
 
 export interface Settings {
-  language: 'system' | 'en' | 'pl';
+  language: LanguageSetting;
   autoBackup: boolean;
   lastBackupAt?: string;
   onboardingDone: boolean;

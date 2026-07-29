@@ -23,9 +23,9 @@ import { StampView } from '@/components/StampView';
 import { distanceKm, KRAKOW_CENTER, parkById } from '@/data/parks';
 import { parkPhotos, photoCredits } from '@/data/parkPhotos';
 import { useUserLocation } from '@/hooks/useUserLocation';
-import { useI18n } from '@/i18n';
+import { localeTag, useI18n } from '@/i18n';
 import { openNativeMaps } from '@/lib/nativeMaps';
-import { persistPhoto, photoExists } from '@/lib/photos';
+import { persistPhoto, photoExists, resolvePhotoUri } from '@/lib/photos';
 import { useAppStore } from '@/store';
 import { categories, fonts, ground, radii, spacing } from '@/theme/tokens';
 
@@ -70,9 +70,9 @@ export default function ParkDetailScreen() {
 
   const origin = userLoc ?? KRAKOW_CENTER;
   const dist = distanceKm(origin.lat, origin.lng, park.lat, park.lng);
-  const history = lang === 'pl' ? park.history.pl : park.history.en;
+  const history = park.history[lang] ?? park.history.en;
   const stampedDate = visit
-    ? new Date(visit.stampedAt).toLocaleDateString(lang === 'pl' ? 'pl-PL' : 'en-GB', {
+    ? new Date(visit.stampedAt).toLocaleDateString(localeTag(lang), {
         day: 'numeric',
         month: 'short',
       })
@@ -244,7 +244,11 @@ export default function ParkDetailScreen() {
                 {visit.photos
                   .filter((photo) => photoExists(photo.uri))
                   .map((photo) => (
-                    <Image key={photo.uri} source={{ uri: photo.uri }} style={styles.visitPhoto} />
+                    <Image
+                      key={photo.uri}
+                      source={{ uri: resolvePhotoUri(photo.uri) }}
+                      style={styles.visitPhoto}
+                    />
                   ))}
                 <Pressable
                   accessibilityRole="button"

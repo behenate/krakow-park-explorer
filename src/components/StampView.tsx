@@ -2,7 +2,7 @@ import React from 'react';
 import { Image, StyleSheet, View } from 'react-native';
 
 import { parkById } from '@/data/parks';
-import { basePlates, parkLayers, unvisitedOverlays } from '@/data/stampArt';
+import { basePlates, parkLayers, stampLang, unvisitedOverlays } from '@/data/stampArt';
 import { useI18n } from '@/i18n';
 
 /**
@@ -52,8 +52,9 @@ export function StampView({ parkId, size, stamped, whiteTint = false, tintColor,
   const park = parkById(parkId);
   if (!park) return null;
 
-  const plate = basePlates[`${park.category}-${lang}`];
-  const overlay = stamped ? parkLayers[parkId] : unvisitedOverlays[`${park.category}-${lang}`];
+  const plateLang = stampLang(lang);
+  const plate = basePlates[`${park.category}-${plateLang}`];
+  const overlay = stamped ? parkLayers[parkId] : unvisitedOverlays[`${park.category}-${plateLang}`];
   const character = stamped ? stampCharacter(parkId) : { rotation: 0, opacity: 1 };
   const angle = rotation ?? character.rotation;
 
@@ -68,12 +69,12 @@ export function StampView({ parkId, size, stamped, whiteTint = false, tintColor,
     >
       <Image
         source={plate}
-        style={[styles.layer, whiteTint && styles.white]}
+        style={[styles.layer, whiteTint && styles.white, tintColor ? { tintColor } : null]}
         accessibilityIgnoresInvertColors
       />
       <Image
         source={overlay}
-        style={[styles.layer, whiteTint && styles.white]}
+        style={[styles.layer, whiteTint && styles.white, tintColor ? { tintColor } : null]}
         accessibilityIgnoresInvertColors
       />
     </View>

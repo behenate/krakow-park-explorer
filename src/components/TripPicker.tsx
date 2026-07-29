@@ -15,7 +15,7 @@ import { ParkMap } from '@/components/ParkMap';
 import { Chip, PillButton } from '@/components/ui';
 import { detourKm, GeoPoint } from '@/lib/corridor';
 import { Park, parks } from '@/data/parks';
-import { useI18n } from '@/i18n';
+import { localeTag, useI18n } from '@/i18n';
 import { useAppStore } from '@/store';
 import { useTripDraft } from '@/store/tripDraft';
 import { categories, fonts, ground, radii, spacing } from '@/theme/tokens';
@@ -96,7 +96,7 @@ export function TripPicker({ visible, onClose, start, end, stops, autoIds, stamp
   const stampedDate = (parkId: string) => {
     const v = visits[parkId];
     const date = v
-      ? new Date(v.stampedAt).toLocaleDateString(lang === 'pl' ? 'pl-PL' : 'en-GB', {
+      ? new Date(v.stampedAt).toLocaleDateString(localeTag(lang), {
           day: 'numeric',
           month: 'short',
         })

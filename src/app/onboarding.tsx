@@ -10,6 +10,7 @@ import { Floaty } from '@/components/motion';
 import { StampView } from '@/components/StampView';
 import { Body, Heading, PillButton } from '@/components/ui';
 import { useI18n } from '@/i18n';
+import { LANGUAGE_CYCLE, LANGUAGE_LABELS, resolveLanguage } from '@/i18n/language';
 import { useAppStore } from '@/store';
 import { categories, fonts, ground, radii, spacing } from '@/theme/tokens';
 
@@ -52,9 +53,10 @@ export default function OnboardingScreen() {
     location: { title: t('onbLocationTitle'), body: t('onbLocationBody') },
   };
 
-  const toggleLanguage = () => {
-    const current = language === 'system' ? 'en' : language;
-    setSettings({ language: current === 'en' ? 'pl' : 'en' });
+  // Cycles the concrete languages; picking one here pins it over the system default.
+  const current = resolveLanguage(language);
+  const cycleLanguage = () => {
+    setSettings({ language: LANGUAGE_CYCLE[(LANGUAGE_CYCLE.indexOf(current) + 1) % LANGUAGE_CYCLE.length] });
   };
 
   return (
@@ -62,9 +64,9 @@ export default function OnboardingScreen() {
       <View style={styles.topRow}>
         {/* Design 1b: language switcher lives on card 1 only */}
         {card === 'challenge' ? (
-          <Pressable accessibilityRole="button" onPress={toggleLanguage} style={styles.langPill}>
+          <Pressable accessibilityRole="button" onPress={cycleLanguage} style={styles.langPill}>
             <Icon name="globe" size={13} color={ground.text} />
-            <Text style={styles.langText}>{language === 'pl' ? 'Polski' : 'English'} ▾</Text>
+            <Text style={styles.langText}>{LANGUAGE_LABELS[current]} ▾</Text>
           </Pressable>
         ) : (
           <View />

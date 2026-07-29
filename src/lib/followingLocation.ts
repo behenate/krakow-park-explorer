@@ -1,9 +1,9 @@
-import { getLocales } from 'expo-localization';
 import * as Location from 'expo-location';
 import * as Notifications from 'expo-notifications';
 import * as TaskManager from 'expo-task-manager';
 
 import { distanceKm, parkById } from '@/data/parks';
+import { resolveLanguage } from '@/i18n/language';
 import { Language, translations } from '@/i18n/translations';
 import { useAppStore } from '@/store';
 
@@ -16,9 +16,7 @@ const notifiedParkIds = new Set<string>();
 
 /** Resolve the app language outside React (tasks can't use hooks). */
 function currentLanguage(): Language {
-  const setting = useAppStore.getState().settings.language;
-  if (setting !== 'system') return setting;
-  return getLocales()[0]?.languageCode === 'pl' ? 'pl' : 'en';
+  return resolveLanguage(useAppStore.getState().settings.language);
 }
 
 function tr(key: keyof (typeof translations)['en']): string {

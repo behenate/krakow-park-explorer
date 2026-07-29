@@ -1,7 +1,7 @@
-import { getLocales } from 'expo-localization';
 import React, { createContext, useContext, useMemo } from 'react';
 
 import { useAppStore } from '@/store';
+import { resolveLanguage } from './language';
 import { Language, TranslationKey, translations } from './translations';
 
 interface I18n {
@@ -11,14 +11,9 @@ interface I18n {
 
 const I18nContext = createContext<I18n | null>(null);
 
-function systemLanguage(): Language {
-  const code = getLocales()[0]?.languageCode;
-  return code === 'pl' ? 'pl' : 'en';
-}
-
 export function I18nProvider({ children }: { children: React.ReactNode }) {
   const setting = useAppStore((s) => s.settings.language);
-  const lang: Language = setting === 'system' ? systemLanguage() : setting;
+  const lang = resolveLanguage(setting);
 
   const value = useMemo<I18n>(
     () => ({
@@ -36,6 +31,8 @@ export function I18nProvider({ children }: { children: React.ReactNode }) {
 
   return <I18nContext.Provider value={value}>{children}</I18nContext.Provider>;
 }
+
+export { localeTag, resolveLanguage } from './language';
 
 export function useI18n(): I18n {
   const ctx = useContext(I18nContext);

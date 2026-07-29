@@ -64,6 +64,65 @@ const api = async (params) => {
 
 const stripHtml = (s) => (s ?? '').replace(/<[^>]*>/g, '').trim();
 
+/**
+ * Hand-picked Commons files (curated 2026-07-29, extended 2026-07-30) for parks
+ * the automatic title search misses. Exact "File:…" titles on Commons; the
+ * normal imageinfo step still fetches author + license for attribution.json.
+ * Every entry below was opened and eyeballed — the search ranks by title, which
+ * is why it lands on a hotel, a train stop or a bike rack for the near misses.
+ */
+const CURATED_FILES = {
+  'blonia-krakowskie': 'File:Błonia,Kraków 2015.JPG',
+  'bulwary-wisly': 'File:Czerwieński boulevard, Krakow, Poland.jpg',
+  'fort-batowice': 'File:Krakow Fort Batowice 20080309 1339 2650.jpg',
+  'fort-mistrzejowice': 'File:Fort Mistrzejowice 19.IV.2009 -02.jpg',
+  // North section opened 2025-06; no Commons photo of it yet — S part of the same park.
+  'park-aleksandry-polnoc': 'File:Aleksandry Park, S part, Prokocim, Kraków, Poland.jpg',
+  'park-bagry-wielkie': 'File:Bagry Lake (view from West), Krakow, Poland.jpg',
+  'park-fort-2-kosciuszko': 'File:DJI 0236 Kopiec Kościuszki.jpg',
+  'park-fort-bronowice': 'File:Fort nr 7 Bronowice ul. Rydla moa.JPG',
+  'park-jana-matejki': 'File:617683 A 683 Krakow Krzesławice Wankowicza 25 park w zespole dworsko parkowym 52.JPG',
+  'park-klasztorna': 'File:Park, Młodości Estate, Mogiła, Nowa Huta, Krakow, Poland.jpg',
+  'park-kolejowy': 'File:EstakadaKolejowa-ParkKolejowy-WidokOdPółnocy-Grzegórzki-POL, Kraków.jpg',
+  'park-kurczaba': 'File:Park Dolina Kurczaba 01.jpg',
+  'park-nad-bialucha': 'File:Białucha (Prądnik) river, Nadbrzeżna street, Kraków, Poland.jpg',
+  'park-nad-rudawa': 'File:Rudawa river along Błonia, Kraków, Poland, 2019.jpg',
+  'park-ogrod-lobzow': 'File:Kraków ul. Podchorążych 1 A-645 PL-617200 Ogród.jpg',
+  'park-ogrod-plaszow': 'File:Park Rzeczny Ogród Płaszów w Krakowie 4.jpg',
+  'park-przy-dworze-czeczow': 'File:Dwor czeczow db 01.JPG',
+  // The whole "Potok pychowicki" series is the same stream; #1 is geotagged
+  // inside the park (~260 m from its centre), #3 is ~900 m away.
+  'park-pychowicki': 'File:Potok pychowicki 1.jpg',
+  'park-rzeczny-drwinka': 'File:DrwinkaIJejDolina-OsNaKozłówce-POL, Kraków.jpg',
+  'park-rzeczny-tetmajera': 'File:ParkRzecznyIm.WłodzimierzaTetmajera-WidokOgólny-Bronowice-POL, Kraków.jpg',
+  'park-skalskiego': 'File:ParkGen.Pil.StanisławaSkalskiego-OgólnyWidok-OsiedleDywizjonu303-POL, Kraków.jpg',
+  'park-sw-wincentego-a-paulo': 'File:St. Vincent de Paul Park, Misjonarska street, Krakow, Poland.JPG',
+  'planty-bienczyckie': 'File:PlantyBieńczyckie-OgólnyWidok-OsiedleKazimierzowskie-Bieńczyce-POL, Kraków.jpg',
+  'planty-nowackiego': 'File:Florian Nowacki Planty Park, Emil Serkowski square, Podgórze, Krakow, Poland.jpg',
+};
+
+/**
+ * Parks with no usable Commons photo (checked 2026-07-30 by name search,
+ * category search and geosearch within 1.5 km of the published coordinates).
+ * Commons has *something* nearby for most of them — a street, a housing block,
+ * a bike-share rack, farmland — but nothing that depicts the park, so the app
+ * shows its "PARK PHOTO" placeholder instead of a misleading hero. Skipping
+ * them also stops the title search from latching onto those near misses.
+ * Re-check occasionally: several of these parks opened after 2023.
+ */
+const NO_COMMONS_PHOTO = new Set([
+  'park-grzegorzecki', // nearest hits are Park przy Śluzie / Park Dąbie — different parks
+  'park-kultury', // only Nowohuckie Centrum Kultury building + event photos
+  'park-lagiewnicki', // nearest geotagged photo is ul. Turowicza traffic
+  'park-linearny-ruczaj', // "Park-e-bike" hits are a bike-share brand, 1.7 km away
+  'park-przy-ul-lokietka',
+  'park-przy-ul-radzikowskiego', // nearest is a B&W street view of ul. Wizjonerów
+  'park-wegrzynowice', // only village buildings and farmland panoramas
+  'park-woznicow',
+  'park-zlocien', // only the train stop and a watermarked housing-estate photo
+  'przylasek-wyciaski', // only a village crossroads in Wyciąże
+]);
+
 async function findImage(parkName) {
   // Prefer files whose title mentions the park; search File namespace.
   for (const query of [`"${parkName}" Kraków`, `${parkName} Kraków`]) {
@@ -107,17 +166,26 @@ async function imageInfo(title) {
 
 let done = 0;
 let missing = [];
+let skipped = [];
 for (const { slug, name } of rows) {
   const outFile = path.join(OUT_DIR, `${slug}.webp`);
   if (existsSync(outFile) && !FORCE) {
     done++;
     continue;
   }
+  if (NO_COMMONS_PHOTO.has(slug)) {
+    skipped.push(slug);
+    continue;
+  }
   try {
-    const title = await findImage(name);
+    const title = CURATED_FILES[slug] ?? (await findImage(name));
     if (!title) throw new Error('no Commons match');
     const info = await imageInfo(title);
-    if (!info?.thumbUrl) throw new Error('no image url');
+    // A curated title that no longer resolves is a typo or a Commons rename —
+    // report it so it gets fixed, rather than silently grabbing a search hit.
+    if (!info?.thumbUrl) {
+      throw new Error(CURATED_FILES[slug] ? `curated title not on Commons: ${title}` : 'no image url');
+    }
     await sleep(REQUEST_GAP_MS);
     const res = await politeFetch(info.thumbUrl);
     if (!res.ok) throw new Error(`download ${res.status}`);
@@ -170,4 +238,5 @@ export const photoCredits: Record<string, PhotoCredit> = require('../../assets/p
 );
 
 console.log(`\n${done}/${rows.length} photos ready · ${missing.length} missing${missing.length ? ': ' + missing.join(', ') : ''}`);
+console.log(`${skipped.length} skipped (no Commons photo exists): ${skipped.join(', ')}`);
 console.log('Regenerated src/data/parkPhotos.ts');

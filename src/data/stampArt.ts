@@ -1,5 +1,7 @@
 import { ImageSourcePropType } from 'react-native';
 
+import { Language } from '@/i18n/translations';
+
 /**
  * AUTO-GENERATED layered stamp assets (base plates + park layers + unvisited
  * overlays), rasterized from assets/stamps/layers/*.svg by
@@ -8,7 +10,15 @@ import { ImageSourcePropType } from 'react-native';
  * share a 200pt frame and stack pixel-perfectly.
  */
 
+/**
+ * Only two sets of plates exist — the kind text is baked into the art. Other
+ * UI languages borrow the English plates.
+ */
 export type StampLang = 'pl' | 'en';
+
+export function stampLang(lang: Language): StampLang {
+  return lang === 'pl' ? 'pl' : 'en';
+}
 
 export const basePlates: Record<string, ImageSourcePropType> = {
   'historical-pl': require('../../assets/stamps/layers/base-historical-pl.webp'),

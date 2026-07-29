@@ -3,7 +3,6 @@ import {
   GeoJSONSource,
   Layer,
   Map as MLMap,
-  UserLocation,
   type PressEvent,
   type PressEventWithFeatures,
 } from '@maplibre/maplibre-react-native';
@@ -12,6 +11,7 @@ import { type NativeSyntheticEvent, View } from 'react-native';
 
 import { Park } from '@/data/parks';
 import { DistributionPoint, MapStop } from '@/components/IllustratedMap';
+import { UserPuck } from '@/components/UserPuck';
 import { KRAKOW_BOUNDS, parkoMapStyle } from '@/lib/mapStyle';
 import { categories, ground } from '@/theme/tokens';
 
@@ -513,7 +513,7 @@ export function ParkMap({
           />
         </GeoJSONSource>
 
-        {userLocation ? <UserLocation /> : null}
+        {userLocation ? <UserPuck fallback={userLocation} /> : null}
       </MLMap>
     </View>
   );

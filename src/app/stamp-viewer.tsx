@@ -8,7 +8,7 @@ import { Floaty } from '@/components/motion';
 import { StampView } from '@/components/StampView';
 import { Body, Heading, PillButton } from '@/components/ui';
 import { parkById } from '@/data/parks';
-import { useI18n } from '@/i18n';
+import { localeTag, useI18n } from '@/i18n';
 import { useAppStore } from '@/store';
 import { categories, fonts, ground, radii, spacing } from '@/theme/tokens';
 
@@ -31,7 +31,7 @@ export default function StampViewerScreen() {
   const pal = categories[park.category];
   const stamped = !!visit;
   const stampedDate = visit
-    ? new Date(visit.stampedAt).toLocaleDateString(lang === 'pl' ? 'pl-PL' : 'en-GB', {
+    ? new Date(visit.stampedAt).toLocaleDateString(localeTag(lang), {
         day: 'numeric',
         month: 'long',
         year: 'numeric',
