@@ -81,9 +81,15 @@ const CURATED_FILES = {
   'park-bagry-wielkie': 'File:Bagry Lake (view from West), Krakow, Poland.jpg',
   'park-fort-2-kosciuszko': 'File:DJI 0236 Kopiec Kościuszki.jpg',
   'park-fort-bronowice': 'File:Fort nr 7 Bronowice ul. Rydla moa.JPG',
+  // These four shipped before attribution.json existed; the titles were
+  // recovered by pixel-matching the shipped .webp against Commons, so pinning
+  // them here keeps the credit correct if the images are ever re-fetched.
+  'park-im-henryka-jordana': 'File:023Kraków.JPG',
+  'park-im-wojciecha-bednarskiego': 'File:North entrance to Bednarski Park, Kraków Poland..jpg',
   'park-jana-matejki': 'File:617683 A 683 Krakow Krzesławice Wankowicza 25 park w zespole dworsko parkowym 52.JPG',
   'park-klasztorna': 'File:Park, Młodości Estate, Mogiła, Nowa Huta, Krakow, Poland.jpg',
   'park-kolejowy': 'File:EstakadaKolejowa-ParkKolejowy-WidokOdPółnocy-Grzegórzki-POL, Kraków.jpg',
+  'park-krakowski-im-marka-grechuty': 'File:2025 Kraków, Park Krakowski, 3.jpg',
   'park-kurczaba': 'File:Park Dolina Kurczaba 01.jpg',
   'park-nad-bialucha': 'File:Białucha (Prądnik) river, Nadbrzeżna street, Kraków, Poland.jpg',
   'park-nad-rudawa': 'File:Rudawa river along Błonia, Kraków, Poland, 2019.jpg',
@@ -98,6 +104,7 @@ const CURATED_FILES = {
   'park-skalskiego': 'File:ParkGen.Pil.StanisławaSkalskiego-OgólnyWidok-OsiedleDywizjonu303-POL, Kraków.jpg',
   'park-sw-wincentego-a-paulo': 'File:St. Vincent de Paul Park, Misjonarska street, Krakow, Poland.JPG',
   'planty-bienczyckie': 'File:PlantyBieńczyckie-OgólnyWidok-OsiedleKazimierzowskie-Bieńczyce-POL, Kraków.jpg',
+  'planty-krakowskie': 'File:Planty Park in winter (Kraków).jpg',
   'planty-nowackiego': 'File:Florian Nowacki Planty Park, Emil Serkowski square, Podgórze, Krakow, Poland.jpg',
 };
 

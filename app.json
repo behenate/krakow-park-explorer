@@ -65,6 +65,8 @@
         {
           "locationWhenInUsePermission": "Kraków Park Explorer shows parks near you and plans routes.",
           "locationAlwaysAndWhenInUsePermission": "While following a route, Kraków Park Explorer detects when you reach a park. Tracking stops when the route ends.",
+          "isIosBackgroundLocationEnabled": true,
+          "motionUsagePermission": "Motion improves arrival detection while you follow a route.",
           "isAndroidBackgroundLocationEnabled": true
         }
       ],
@@ -72,7 +74,8 @@
         "expo-image-picker",
         {
           "photosPermission": "Attach photos from your library to park visits.",
-          "cameraPermission": "Take memory photos at the parks you visit."
+          "cameraPermission": "Take memory photos at the parks you visit.",
+          "microphonePermission": false
         }
       ]
     ],
