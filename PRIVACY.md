@@ -2,6 +2,8 @@
 
 _Last updated: 30 July 2026_
 
+[Polski](PRIVACY-PL.md) · [Українська](PRIVACY-UA.md)
+
 Kraków Park Explorer does not collect, store, or transmit any personal data.
 
 - **No accounts.** There is no sign-up and no server holding your data.
