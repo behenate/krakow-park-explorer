@@ -6,7 +6,7 @@ import { Body, Heading, PillButton, SectionLabel } from '@/components/ui';
 import { GITHUB_URL, ZZM } from '@/config';
 import { localeTag, useI18n } from '@/i18n';
 import { LANGUAGE_LABELS, LANGUAGE_ORDER } from '@/i18n/language';
-import { autoBackupIfEnabled, exportBackup, importBackup, writeLocalBackup } from '@/lib/backup';
+import { exportBackup, importBackup, writeLocalBackup } from '@/lib/backup';
 import { exportPhotosToGallery } from '@/lib/photos';
 import { useAppStore } from '@/store';
 import { categories, fonts, ground, radii, spacing } from '@/theme/tokens';
@@ -22,22 +22,6 @@ export default function SettingsScreen() {
   const [exportingPhotos, setExportingPhotos] = useState(false);
   const [photosNote, setPhotosNote] = useState<string | null>(null);
   const photosNoteTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  // Auto-backup: debounce 3s after visits change, then write the local bundle.
-  useEffect(() => {
-    let debounce: ReturnType<typeof setTimeout> | null = null;
-    const unsubscribe = useAppStore.subscribe((state, prev) => {
-      if (state.visits === prev.visits) return;
-      if (debounce) clearTimeout(debounce);
-      debounce = setTimeout(() => {
-        void autoBackupIfEnabled();
-      }, 3000);
-    });
-    return () => {
-      unsubscribe();
-      if (debounce) clearTimeout(debounce);
-    };
-  }, []);
 
   useEffect(
     () => () => {
@@ -85,7 +69,9 @@ export default function SettingsScreen() {
     : null;
 
   const backupNow = () => {
-    void writeLocalBackup();
+    // Best-effort, like auto-backup: a failed write must not crash the app
+    // with an unhandled rejection.
+    writeLocalBackup().catch(() => {});
   };
 
   const languageLabel =

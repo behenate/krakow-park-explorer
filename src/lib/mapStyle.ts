@@ -12,6 +12,12 @@ import { categories, ground } from '@/theme/tokens';
 /** Kraków city bounding box [west, south, east, north] — camera hard limit. */
 export const KRAKOW_BOUNDS: [number, number, number, number] = [19.77, 49.96, 20.24, 50.14];
 
+/** Whether a coordinate lies inside the map's hard camera bounds. */
+export function isInKrakowBounds(lat: number, lng: number): boolean {
+  const [west, south, east, north] = KRAKOW_BOUNDS;
+  return lng >= west && lng <= east && lat >= south && lat <= north;
+}
+
 // Palette derived from tokens: cream ground, tinted greens/blues, muted browns.
 const c = {
   bg: ground.bg, // #f5ead8 cream

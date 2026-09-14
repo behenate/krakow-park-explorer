@@ -4,6 +4,7 @@ import * as Notifications from 'expo-notifications';
 import { useFocusEffect, useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  Alert,
   Animated as RNAnimated,
   Linking,
   Platform,
@@ -32,19 +33,27 @@ import { useUserLocation } from '@/hooks/useUserLocation';
 import { useI18n } from '@/i18n';
 import { TransportMode, useAppStore } from '@/store';
 import { TripPoint, useTripDraft } from '@/store/tripDraft';
-import { buildTrip, diffAutoPicks, TripPlan, tripLegs, tripMinutes } from '@/lib/corridor';
+import { buildTrip, TripPlan, tripLegs } from '@/lib/corridor';
 import {
   requestNotifPermission,
   startBackgroundFollowing,
   stopBackgroundFollowing,
 } from '@/lib/followingLocation';
+import { isInKrakowBounds } from '@/lib/mapStyle';
 import { fetchRouteGeometry, LngLatCoord } from '@/lib/routing';
 import { relegLegs } from '@/lib/tsp';
 import { categories, fonts, ground, radii, spacing } from '@/theme/tokens';
 
+/** Time for the primer <Modal> fade-out to finish before presenting an Alert on iOS. */
+const PRIMER_DISMISS_MS = 400;
+
 const ARRIVAL_RADIUS_KM = 0.18;
 
-type Phase = 'setup' | 'computing' | 'preview' | 'result' | 'complete';
+/**
+ * The custom-trip preview is NOT a phase here — it is a pushed screen
+ * (`/trip-preview`), so the system back gesture / button can dismiss it.
+ */
+type Phase = 'setup' | 'computing' | 'result' | 'complete';
 
 /**
  * Completion fan — the real stamps just collected, laid out like cards on a
@@ -101,9 +110,7 @@ export default function RouteScreen() {
   const [notifPrimerVisible, setNotifPrimerVisible] = useState(false);
   const [stopVisible, setStopVisible] = useState(false);
   const [arrivalPark, setArrivalPark] = useState<Park | null>(null);
-  const [offlineNote, setOfflineNote] = useState(false);
   const [routeGeometry, setRouteGeometry] = useState<LngLatCoord[] | null>(null);
-  const [previewGeometry, setPreviewGeometry] = useState<LngLatCoord[] | null>(null);
   /** Which point the TripPointPicker is editing. */
   const [pointPicking, setPointPicking] = useState<'start' | 'end' | null>(null);
   const [tripPickerVisible, setTripPickerVisible] = useState(false);
@@ -125,7 +132,10 @@ export default function RouteScreen() {
     [visits],
   );
   const remaining = useMemo(() => parks.filter((p) => !stampedIds.has(p.id)), [stampedIds]);
-  const origin = userLoc ?? KRAKOW_CENTER;
+  // A GPS fix outside the map's hard bounds is treated like no fix at all:
+  // it must never become a trip start point, so it falls back to the centre.
+  const origin =
+    userLoc && isInKrakowBounds(userLoc.lat, userLoc.lng) ? userLoc : KRAKOW_CENTER;
   const startPoint = origin;
 
   // ---- custom trip draft (design 3a–3e) ----
@@ -158,15 +168,17 @@ export default function RouteScreen() {
   );
 
   /**
-   * Live corridor plan — haversine-based, cheap enough to recompute inline.
-   * Custom trips only: their setup screen shows a live km/detour summary and
-   * the preview is built from it. Quick trips build their own plan when the
-   * user hits Generate, so computing here would just make every stepper tap
-   * re-run buildTrip for a result nothing reads.
+   * Corridor plan (custom trips only). buildTrip is heavy (greedy insertion
+   * + 2-opt), so it never runs while the user is still dialling in the setup
+   * screen — stepper taps must stay free of recalculation. It runs only
+   * where its result is actually read: the hand-picker modal (live detour
+   * tally). The preview screen builds its own plan; quick trips build theirs
+   * in generateQuick.
    */
+  const planNeeded = scope === 'custom' && tripPickerVisible;
   const plan = useMemo(
     () =>
-      scope === 'custom'
+      planNeeded
         ? buildTrip(
             tripStart,
             tripEndEff,
@@ -178,7 +190,7 @@ export default function RouteScreen() {
         : EMPTY_PLAN,
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [
-      scope,
+      planNeeded,
       tripStart.lat,
       tripStart.lng,
       tripEndEff.lat,
@@ -217,40 +229,15 @@ export default function RouteScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [legIdsKey, online, startPoint.lat, startPoint.lng]);
 
-  // Street-following geometry for the un-saved preview (design 3c).
-  const planStopsKey = plan.stops.map((p) => p.id).join(',');
+  /**
+   * A trip saved on the pushed preview screen arrives here as a new
+   * activeRoute; swap this tab over to its result view so popping back lands
+   * on the running trip rather than the setup form.
+   */
   useEffect(() => {
-    let cancelled = false;
-    setPreviewGeometry(null);
-    if (phase !== 'preview' || !online || plan.stops.length === 0) return;
-    const points = [
-      { lat: tripStart.lat, lng: tripStart.lng },
-      ...plan.stops.map((p) => ({ lat: p.lat, lng: p.lng })),
-      { lat: tripEndEff.lat, lng: tripEndEff.lng },
-    ];
-    fetchRouteGeometry(points, mode).then((coords) => {
-      if (!cancelled) setPreviewGeometry(coords);
-    });
-    return () => {
-      cancelled = true;
-    };
+    if (activeRoute && phase === 'setup') setPhase('result');
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [phase, planStopsKey, mode, online, tripStart.lat, tripStart.lng, tripEndEff.lat, tripEndEff.lng]);
-
-  // Swap diffing (design 3c): when an edit changes the auto-pick set, show
-  // "swapped in — replaces X" rows. Baseline is set when preview opens.
-  useEffect(() => {
-    if (phase !== 'preview') return;
-    const prev = draft.prevAutoIds;
-    if (prev.join(',') === plan.autoIds.join(',')) return;
-    const stopIds = new Set(plan.stops.map((p) => p.id));
-    const stillValid = draft.swaps.filter((s) => stopIds.has(s.inId) && !stopIds.has(s.outId));
-    const fresh = diffAutoPicks(prev, plan.autoIds, draft.prevTotalKm, plan.totalKm).filter(
-      (s) => !stillValid.some((x) => x.inId === s.inId),
-    );
-    draft.setSwaps([...stillValid, ...fresh], plan.autoIds, plan.totalKm);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [phase, plan.autoIds.join(','), plan.totalKm]);
+  }, [activeRoute]);
 
   const nearbyCount = useMemo(
     () => remaining.filter((p) => distanceKm(origin.lat, origin.lng, p.lat, p.lng) <= 2).length,
@@ -259,7 +246,6 @@ export default function RouteScreen() {
 
   // ---- generation: Quick trip = one self-contained outing (design 1m) ----
   const generateQuick = () => {
-    setOfflineNote(!online && (mode === 'walk' || mode === 'bike'));
     setPhase('computing');
     setTimeout(() => {
       const quickPlan = buildTrip(
@@ -301,44 +287,17 @@ export default function RouteScreen() {
   };
 
   // ---- custom trip flow (design 3a–3c) ----
+  /**
+   * The preview is a pushed screen, not a phase, so the Android back gesture /
+   * button and the iOS swipe dismiss it for free. It builds its own plan behind
+   * the optimising loader and saves the trip itself.
+   */
   const openPreview = () => {
-    draft.setSwaps([], plan.autoIds, plan.totalKm); // baseline for swap diffs
-    setPhase('preview');
-  };
-
-  /** × on an auto-pick: drop it without a replacement (stepper −1). */
-  const removeAutoPick = (parkId: string) => {
-    draft.excludeAuto(parkId);
-    draft.setAutoCount(scope, autoCount - 1);
-  };
-
-  /** Undo a swap: the old park comes back locked; one auto slot is used up. */
-  const undoSwap = (swap: (typeof draft.swaps)[number]) => {
-    draft.undoSwap(swap);
-    draft.setAutoCount(scope, autoCount - 1);
-  };
-
-  const saveTrip = () => {
-    const { legs } = tripLegs(tripStart, plan.stops, tripEndEff, mode);
-    setOfflineNote(!online && (mode === 'walk' || mode === 'bike'));
-    setActiveRoute({
-      mode,
-      kind: 'custom',
-      legs: legs.map((l) => ({
-        parkId: l.park.id,
-        distanceKm: l.distanceKm,
-        durationMin: l.durationMin,
-        done: false,
-      })),
-      dayIndex: 0,
-      dayCount: 1,
-      following: false,
-      trackingEnabled: false,
-      startPoint: { lat: tripStart.lat, lng: tripStart.lng, label: tripStart.label },
-      endPoint: { lat: tripEndEff.lat, lng: tripEndEff.lng, label: tripEndEff.label },
-      roundTrip: isLoop,
-    });
-    setPhase('result');
+    // Clear the swap baseline before the push. The preview's swap-diff effect
+    // establishes the real baseline from its first computed plan — an empty
+    // previous set pairs into zero rows, so no spurious "swapped in" entries.
+    draft.setSwaps([], [], 0);
+    router.push({ pathname: '/trip-preview', params: { mode } });
   };
 
   const reoptimise = () => {
@@ -450,19 +409,37 @@ export default function RouteScreen() {
 
   const startFollowing = () => setPrimerVisible(true);
 
+  /**
+   * App Review 5.1.1(iv): the primer must always continue into the system
+   * permission dialog; the user decides there. A previously denied
+   * permission produces no dialog, so point at the Settings app instead
+   * (Apple's suggested pattern) and fall back to manual check-ins.
+   */
   const enableTracking = async () => {
     setPrimerVisible(false);
-    const { status } = await Location.requestForegroundPermissionsAsync();
-    const granted = status === Location.PermissionStatus.GRANTED;
+    const res = await Location.requestForegroundPermissionsAsync().catch(() => null);
+    const granted = res?.status === Location.PermissionStatus.GRANTED;
     if (activeRoute) setActiveRoute({ ...activeRoute, following: true, trackingEnabled: granted });
-    // Background updates are an enhancement — foreground watcher covers in-app detection.
-    if (granted) startBackgroundFollowing().catch(() => {});
-    setNotifPrimerVisible(true);
+    if (granted) {
+      // Background updates are an enhancement — foreground watcher covers in-app detection.
+      startBackgroundFollowing().catch(() => {});
+      setNotifPrimerVisible(true);
+      return;
+    }
+    if (res && !res.canAskAgain) {
+      // The primer is a React Native <Modal>; iOS drops an Alert presented
+      // while it is still fading out, so let the dismissal settle first.
+      await new Promise<void>((resolve) => setTimeout(resolve, PRIMER_DISMISS_MS));
+      Alert.alert(t('locationDeniedTitle'), t('locationDeniedBody'), [
+        { text: t('notNow'), style: 'cancel' },
+        { text: t('openSettings'), onPress: () => Linking.openSettings().catch(() => {}) },
+      ]);
+    }
   };
 
-  const skipTracking = () => {
-    setPrimerVisible(false);
-    if (activeRoute) setActiveRoute({ ...activeRoute, following: true, trackingEnabled: false });
+  const continueToNotifPermission = () => {
+    setNotifPrimerVisible(false);
+    requestNotifPermission();
   };
 
   const stopFollowing = () => {
@@ -488,6 +465,16 @@ export default function RouteScreen() {
 
   const routeFinished =
     !!activeRoute && activeRoute.legs.length > 0 && activeRoute.legs.every((l) => l.done);
+
+  /**
+   * Walking/cycling geometry comes from Valhalla, which needs the network; with
+   * no connection the map falls back to dashed straight lines, so say so. Read
+   * live rather than snapshotted at generation time — the note describes what
+   * the map is drawing right now, and the trip may have been saved on the
+   * pushed preview screen.
+   */
+  const offlineNote =
+    !online && !!activeRoute && (activeRoute.mode === 'walk' || activeRoute.mode === 'bike');
 
   // Every leg done (arrival stamps or manual check-ins) — stop following right
   // away; there is nothing left to watch for.
@@ -583,133 +570,6 @@ export default function RouteScreen() {
             setActiveRoute(null);
             setPhase('setup');
           }}
-        />
-      </View>
-    );
-  }
-
-  if (phase === 'preview') {
-    // Editable preview (design 3c) — nothing is saved until "Save & start".
-    const mapH = Math.round(height * 0.34);
-    const totalMin = tripMinutes(plan.totalKm, plan.stops.length, mode);
-    const hours = Math.max(1, Math.round(totalMin / 60));
-    // Faded, tappable candidates near the corridor (cheapest detours first)
-    const previewCandidates = remaining
-      .filter((p) => !plan.stops.some((s) => s.id === p.id))
-      .slice(0, 60);
-
-    return (
-      <View style={{ flex: 1, backgroundColor: ground.bg }}>
-        <View>
-          <ParkMap
-            width={width}
-            height={mapH}
-            parks={[]}
-            stampedIds={stampedIds}
-            routeStops={plan.stops.map((park, i) => ({ park, index: i + 1 }))}
-            routeGeometry={previewGeometry}
-            anchors={{ start: tripStart, end: tripEndEff }}
-            candidates={previewCandidates}
-            onSelectCandidate={(p) => draft.toggleLocked(p.id)}
-            directLine={isLoop ? undefined : [tripStart, tripEndEff]}
-            userLocation={userLoc}
-            // Editing stops must not move the map under the user's finger
-            fitOnce
-          />
-          <View style={[styles.previewTag, { top: insets.top + 8 }]}>
-            <Text style={styles.previewTagText}>{t('previewNotSaved')}</Text>
-          </View>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel={t('back')}
-            onPress={() => setPhase('setup')}
-            style={[styles.previewBack, { top: insets.top + 8 }]}
-          >
-            <Icon name="back" size={18} color={ground.text} />
-          </Pressable>
-        </View>
-
-        <View style={styles.previewHeader}>
-          <Heading style={{ fontSize: 21, flex: 1 }} numberOfLines={1}>
-            {plan.stops.length} {t('parks')} · {plan.totalKm.toFixed(1)} km · ~{hours} h
-          </Heading>
-          {!isLoop && plan.stops.length > 0 ? (
-            <View style={styles.vsDirectTag}>
-              <Text style={styles.vsDirectText}>{t('vsDirect', { km: plan.extraKm.toFixed(1) })}</Text>
-            </View>
-          ) : null}
-        </View>
-
-        <ScrollView contentContainerStyle={{ paddingHorizontal: spacing.md, gap: 8, paddingBottom: 16 }}>
-          {plan.stops.map((p, i) => {
-            const swap = draft.swaps.find((s) => s.inId === p.id);
-            if (swap) {
-              const replaced = parkById(swap.outId);
-              const pal = categories[p.category];
-              return (
-                <View key={p.id} style={[styles.previewRow, styles.swapRow, { borderColor: pal.ink, backgroundColor: pal.tint }]}>
-                  <Text style={[styles.legIndex, { color: pal.deep }]}>{i + 1}</Text>
-                  <View style={{ flex: 1 }}>
-                    <Text style={[styles.previewRowTitle, { color: pal.deep }]}>
-                      {t('swappedIn', { park: p.name })}
-                    </Text>
-                    <Text style={[styles.previewRowSub, { color: pal.deep }]}>
-                      {t('replacesPark', {
-                        park: replaced?.name ?? swap.outId,
-                        km: `${swap.deltaKm >= 0 ? '+' : ''}${swap.deltaKm.toFixed(1)}`,
-                      })}
-                    </Text>
-                  </View>
-                  <Pressable accessibilityRole="button" hitSlop={8} onPress={() => undoSwap(swap)}>
-                    <Text style={[styles.changeLink, { color: pal.deep }]}>{t('undo')}</Text>
-                  </Pressable>
-                </View>
-              );
-            }
-            const isAuto = planAutoIds.has(p.id);
-            return (
-              <View key={p.id} style={styles.previewRow}>
-                <Text style={styles.legIndex}>{i + 1}</Text>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.previewRowTitle}>{p.name}</Text>
-                </View>
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityLabel={`${t('removeStop')}: ${p.name}`}
-                  hitSlop={8}
-                  onPress={() => (isAuto ? removeAutoPick(p.id) : draft.toggleLocked(p.id))}
-                  style={{ minWidth: 34, minHeight: 34, alignItems: 'center', justifyContent: 'center' }}
-                >
-                  <Icon name="x" size={15} color={ground.textMuted} />
-                </Pressable>
-              </View>
-            );
-          })}
-          <View style={styles.addHintRow}>
-            <Icon name="plus" size={14} color={ground.textMuted} />
-            <Text style={styles.addHintText}>{t('tapFadedPins')}</Text>
-          </View>
-        </ScrollView>
-
-        <View style={[styles.previewFooter, { paddingBottom: insets.bottom + 10 }]}>
-          <PillButton
-            label={t('adjust')}
-            variant="outline"
-            style={{ flex: 1 }}
-            onPress={() => setTripPickerVisible(true)}
-          />
-          <PillButton label={t('saveAndStart')} style={{ flex: 1.6 }} onPress={saveTrip} />
-        </View>
-
-        <TripPicker
-          visible={tripPickerVisible}
-          onClose={() => setTripPickerVisible(false)}
-          start={tripStart}
-          end={tripEndEff}
-          stops={plan.stops}
-          autoIds={planAutoIds}
-          stampedIds={stampedIds}
-          totalKm={plan.totalKm}
         />
       </View>
     );
@@ -913,26 +773,23 @@ export default function RouteScreen() {
           </View>
         </SnapBottomSheet>
 
-        {/* Location primer (contextual, before OS dialog — spec) */}
-        <Dialog visible={primerVisible} onClose={() => setPrimerVisible(false)}>
+        {/* Location primer (contextual, before the OS dialog). Every way out —
+            the button, the backdrop, Android back — continues into the
+            system prompt (App Review 5.1.1(iv)). */}
+        <Dialog visible={primerVisible} onClose={enableTracking}>
           <Heading style={{ fontSize: 24, textAlign: 'center' }}>{t('followPrimerLocTitle')}</Heading>
           <Body style={{ textAlign: 'center', color: ground.textMuted }}>{t('followPrimerLocBody')}</Body>
-          <PillButton label={t('followPrimerLocOk')} onPress={enableTracking} />
-          <PillButton label={t('followPrimerLocSkip')} variant="ghost" onPress={skipTracking} />
+          <Body style={{ textAlign: 'center', color: ground.textMuted, fontSize: 13.5, lineHeight: 19 }}>
+            {t('followPrimerLocNote')}
+          </Body>
+          <PillButton label={t('followPrimerContinue')} onPress={enableTracking} />
         </Dialog>
 
-        {/* Notifications primer */}
-        <Dialog visible={notifPrimerVisible} onClose={() => setNotifPrimerVisible(false)}>
+        {/* Notifications primer — same rule: always continues into the OS prompt */}
+        <Dialog visible={notifPrimerVisible} onClose={continueToNotifPermission}>
           <Heading style={{ fontSize: 24, textAlign: 'center' }}>{t('followPrimerNotifTitle')}</Heading>
           <Body style={{ textAlign: 'center', color: ground.textMuted }}>{t('followPrimerNotifBody')}</Body>
-          <PillButton
-            label={t('followPrimerNotifOk')}
-            onPress={() => {
-              setNotifPrimerVisible(false);
-              requestNotifPermission();
-            }}
-          />
-          <PillButton label={t('maybeLater')} variant="ghost" onPress={() => setNotifPrimerVisible(false)} />
+          <PillButton label={t('followPrimerContinue')} onPress={continueToNotifPermission} />
         </Dialog>
 
         {/* Stop-following confirmation */}
@@ -1175,20 +1032,11 @@ export default function RouteScreen() {
             </Body>
           </View>
         ) : null
-      ) : isLoop ? (
-        <View style={styles.nudgeBox}>
-          <View style={{ alignItems: 'center' }}>
-            <RouteDoodle width={200} height={100} />
-          </View>
-          <Body style={{ color: categories.forest.deep, textAlign: 'center', fontSize: 14.5 }}>
-            {t('loopPreview', { n: plan.stops.length, km: plan.totalKm.toFixed(1) })}
-          </Body>
-        </View>
-      ) : (
+      ) : isLoop ? null : (
         <View style={[styles.nudgeBox, { flexDirection: 'row', alignItems: 'center', gap: 10 }]}>
           <Icon name="pin" size={18} color={categories.forest.deep} />
           <Body style={{ flex: 1, color: categories.forest.deep, fontSize: 14.5 }}>
-            {t('nudgeFit', { n: plan.autoIds.length, km: plan.extraKm.toFixed(1) })}
+            {t('linePlanned', { n: autoCount })}
           </Body>
         </View>
       )}
@@ -1197,8 +1045,10 @@ export default function RouteScreen() {
       <PillButton
         label={scope === 'custom' ? t('previewRoute') : t('generateRoute')}
         onPress={generate}
-        // A custom trip with 0 auto-picks and no hand-picks has nothing to preview.
-        disabled={scope === 'custom' && plan.stops.length === 0}
+        // A custom trip with 0 auto-picks and no hand-picks has nothing to
+        // preview. Checked from the draft, not the plan — the plan is not
+        // computed on the setup screen.
+        disabled={scope === 'custom' && draft.lockedIds.length === 0 && autoCount === 0}
         style={{ marginBottom: insets.bottom + 6 }}
       />
 
@@ -1380,60 +1230,5 @@ const styles = StyleSheet.create({
     borderRadius: radii.lg,
     padding: spacing.md,
     gap: 6,
-  },
-  // ---- preview (design 3c) ----
-  previewTag: {
-    position: 'absolute',
-    left: spacing.md,
-    backgroundColor: ground.dark,
-    borderRadius: radii.pill,
-    paddingVertical: 7,
-    paddingHorizontal: 13,
-  },
-  previewTagText: { color: ground.white, fontFamily: fonts.bodySemi, fontSize: 13 },
-  previewBack: {
-    position: 'absolute',
-    right: spacing.md,
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: ground.white,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  previewHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    paddingHorizontal: spacing.md,
-    paddingVertical: 10,
-  },
-  vsDirectTag: {
-    backgroundColor: categories.forest.tint,
-    borderRadius: radii.pill,
-    paddingVertical: 5,
-    paddingHorizontal: 10,
-  },
-  vsDirectText: { fontFamily: fonts.bodySemi, fontSize: 12.5, color: categories.forest.deep },
-  previewRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    backgroundColor: ground.surfaceLight,
-    borderRadius: radii.md,
-    paddingVertical: 10,
-    paddingHorizontal: 14,
-    minHeight: 52,
-  },
-  swapRow: { borderWidth: 2, borderStyle: 'dashed' },
-  previewRowTitle: { fontFamily: fonts.bodySemi, fontSize: 14.5, color: ground.text },
-  previewRowSub: { fontFamily: fonts.body, fontSize: 12.5, color: ground.textMuted, marginTop: 1 },
-  addHintRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 4, paddingTop: 2 },
-  addHintText: { fontFamily: fonts.bodySemi, fontSize: 13, color: ground.textMuted },
-  previewFooter: {
-    flexDirection: 'row',
-    gap: 8,
-    paddingHorizontal: spacing.md,
-    paddingTop: 8,
   },
 });

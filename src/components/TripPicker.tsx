@@ -49,7 +49,8 @@ export function TripPicker({ visible, onClose, start, end, stops, autoIds, stamp
   const insets = useSafeAreaInsets();
   const { width, height } = useWindowDimensions();
   const [segment, setSegment] = useState<Segment>('map');
-  const [filter, setFilter] = useState<Filter>('near');
+  // Every park is choosable by default; "Near route" is an opt-in narrowing.
+  const [filter, setFilter] = useState<Filter>('all');
   const [callout, setCallout] = useState<Park | null>(null);
 
   const visits = useAppStore((s) => s.visits);
@@ -132,6 +133,13 @@ export function TripPicker({ visible, onClose, start, end, stops, autoIds, stamp
           </View>
         </View>
 
+        {/* Shared filters (map & list read the same candidate list) */}
+        <View style={styles.filterRow}>
+          <Chip label={t('allParksFilter')} active={filter === 'all'} onPress={() => setFilter('all')} />
+          <Chip label={t('nearRoute')} active={filter === 'near'} onPress={() => setFilter('near')} />
+          <Chip label={t('unstamped')} active={filter === 'unstamped'} onPress={() => setFilter('unstamped')} />
+        </View>
+
         {segment === 'map' ? (
           <View style={{ flex: 1 }}>
             <ParkMap
@@ -163,11 +171,6 @@ export function TripPicker({ visible, onClose, start, end, stops, autoIds, stamp
           </View>
         ) : (
           <View style={{ flex: 1 }}>
-            <View style={styles.filterRow}>
-              <Chip label={t('nearRoute')} active={filter === 'near'} onPress={() => setFilter('near')} />
-              <Chip label={t('allParksFilter')} active={filter === 'all'} onPress={() => setFilter('all')} />
-              <Chip label={t('unstamped')} active={filter === 'unstamped'} onPress={() => setFilter('unstamped')} />
-            </View>
             <ScrollView contentContainerStyle={{ padding: spacing.md, paddingTop: 4, gap: 8, paddingBottom: 20 }}>
               {/* In-trip rows first (design 3e) */}
               {stops.map((p, i) => (

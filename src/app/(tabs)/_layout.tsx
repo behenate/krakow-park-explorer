@@ -7,7 +7,7 @@ import { FollowingBanner } from '@/components/FollowingBanner';
 import { Icon, IconName } from '@/components/Icon';
 import { useI18n } from '@/i18n';
 import { useAppStore } from '@/store';
-import { fonts, ground, radii } from '@/theme/tokens';
+import { fonts, ground } from '@/theme/tokens';
 
 const TAB_ICONS: Record<string, IconName> = {
   index: 'pin',
@@ -42,7 +42,17 @@ function TabBar({ state, descriptors, navigation }: any) {
             onPress={onPress}
             style={styles.item}
           >
-            <View style={[styles.iconWrap, focused && styles.iconWrapActive]}>
+            {/* collapsable={false} keeps Android from flattening this view away
+                when it is unfocused (transparent background). Flattening and
+                re-creating the view is what dropped the corner radius and made
+                the active pill look square after the first render. */}
+            <View
+              collapsable={false}
+              style={[
+                styles.iconWrap,
+                { backgroundColor: focused ? ground.accentTint : 'transparent' },
+              ]}
+            >
               <Icon name={TAB_ICONS[route.name]} size={22} color={focused ? ground.accent : ground.textMuted} />
             </View>
             <Text style={[styles.label, focused && styles.labelActive]}>{labels[route.name]}</Text>
@@ -82,11 +92,15 @@ const styles = StyleSheet.create({
   },
   item: { flex: 1, alignItems: 'center', gap: 2, minHeight: 52, justifyContent: 'center' },
   iconWrap: {
-    paddingHorizontal: 20,
-    paddingVertical: 4,
-    borderRadius: radii.pill,
+    width: 62,
+    height: 30,
+    alignItems: 'center',
+    justifyContent: 'center',
+    // Android does not reliably clamp an oversized radius (radii.pill) to half
+    // the view height. Use an explicit half-height radius instead.
+    borderRadius: 15,
+    overflow: 'hidden',
   },
-  iconWrapActive: { backgroundColor: ground.accentTint },
   label: { fontFamily: fonts.body, fontSize: 13, color: ground.textMuted },
   labelActive: { color: ground.accent, fontFamily: fonts.bodySemi },
 });

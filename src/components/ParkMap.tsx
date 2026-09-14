@@ -317,7 +317,15 @@ export function ParkMap({
 
   return (
     <View style={{ width, height, backgroundColor: ground.surface, overflow: 'hidden' }}>
-      <MLMap mapStyle={parkoMapStyle} style={{ flex: 1 }} onPress={onMapPress ? handleMapPress : undefined}>
+      {/* androidView="texture": a SurfaceView is destroyed when the screen is
+          detached (navigating away), so the map re-renders from scratch on
+          return. A TextureView keeps its GL content across blur/focus. */}
+      <MLMap
+        mapStyle={parkoMapStyle}
+        style={{ flex: 1 }}
+        androidView="texture"
+        onPress={onMapPress ? handleMapPress : undefined}
+      >
         <Camera
           initialViewState={initialCamera}
           {...(dynamicCamera ?? {})}

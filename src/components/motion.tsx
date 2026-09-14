@@ -311,26 +311,47 @@ export function PulseDot({ color, size = 8 }: { color: string; size?: number }) 
 }
 
 /**
+ * Dash travel per cycle: an exact multiple of the 7+8 dash period, so the
+ * jump back to the start of a loop is invisible.
+ */
+const DOODLE_DASH_TRAVEL = 300;
+
+/**
  * @keyframes dashh — a dashed route doodle that draws itself, looping
  * (2.6s linear). Shown while the route optimiser is thinking. The two dots
  * mark start and end of the imaginary walk. SVG props animate on the JS
  * driver — native driver only handles styles.
+ *
+ * The rewind is an explicit 0ms leg rather than `loop`'s `resetBeforeIteration`:
+ * that reset writes the value straight back to its starting number without
+ * pushing the new value to the SVG node, so the dashes froze at the end of the
+ * first pass. `resetBeforeIteration: false` + a timing to the start value keeps
+ * every iteration a real, flushed update.
  */
 export function RouteDoodle({ width = 220, height = 120 }: { width?: number; height?: number }) {
   const reduced = useReducedMotion();
-  const offset = useRef(new RNAnimated.Value(reduced ? 0 : 300)).current;
+  const offset = useRef(new RNAnimated.Value(reduced ? 0 : DOODLE_DASH_TRAVEL)).current;
   useEffect(() => {
     if (reduced) {
       offset.setValue(0);
       return;
     }
+    offset.setValue(DOODLE_DASH_TRAVEL);
     const anim = RNAnimated.loop(
-      RNAnimated.timing(offset, {
-        toValue: 0,
-        duration: 2600,
-        easing: RNEasing.linear,
-        useNativeDriver: false,
-      }),
+      RNAnimated.sequence([
+        RNAnimated.timing(offset, {
+          toValue: 0,
+          duration: 2600,
+          easing: RNEasing.linear,
+          useNativeDriver: false,
+        }),
+        RNAnimated.timing(offset, {
+          toValue: DOODLE_DASH_TRAVEL,
+          duration: 0,
+          useNativeDriver: false,
+        }),
+      ]),
+      { resetBeforeIteration: false },
     );
     anim.start();
     return () => anim.stop();

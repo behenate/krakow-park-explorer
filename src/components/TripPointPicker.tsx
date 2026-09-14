@@ -16,6 +16,7 @@ import { ParkMap } from '@/components/ParkMap';
 import { Body, Heading, PillButton } from '@/components/ui';
 import { distanceKm, Park, parks } from '@/data/parks';
 import { useI18n } from '@/i18n';
+import { isInKrakowBounds } from '@/lib/mapStyle';
 import { TripPoint } from '@/store/tripDraft';
 import { categories, fonts, ground, radii, spacing } from '@/theme/tokens';
 
@@ -94,8 +95,11 @@ export function TripPointPicker({
 
         {mode === 'menu' ? (
           <View style={{ gap: 12, padding: spacing.md }}>
+            {/* A GPS fix outside the map's hard bounds cannot anchor a trip —
+                the camera can never reach it. The option is disabled then. */}
             <PillButton
               label={currentLocationLabel}
+              disabled={!!userLoc && !isInKrakowBounds(userLoc.lat, userLoc.lng)}
               onPress={() =>
                 pick({
                   lat: userLoc?.lat ?? 50.0619,
@@ -105,6 +109,11 @@ export function TripPointPicker({
                 })
               }
             />
+            {!!userLoc && !isInKrakowBounds(userLoc.lat, userLoc.lng) ? (
+              <Body style={{ color: ground.textMuted, fontSize: 13.5, textAlign: 'center', marginTop: -4 }}>
+                {t('locationOutsideMap')}
+              </Body>
+            ) : null}
             <PillButton label={t('chooseAPark')} variant="outline" onPress={() => setMode('park')} />
             <PillButton label={t('pickOnMap')} variant="outline" onPress={() => setMode('map')} />
             <PillButton label={t('back')} variant="ghost" onPress={close} />

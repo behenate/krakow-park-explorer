@@ -37,7 +37,10 @@ export default function OnboardingScreen() {
     else finish();
   };
 
-  const allowLocation = async () => {
+  // App Review 5.1.1(iv): the explanation card must always lead straight to
+  // the system permission dialog — no "later" branch, and a neutral button
+  // label. Declining happens in the iOS prompt itself.
+  const continueToPermission = async () => {
     await Location.requestForegroundPermissionsAsync().catch(() => null);
     finish();
   };
@@ -71,9 +74,15 @@ export default function OnboardingScreen() {
         ) : (
           <View />
         )}
-        <Pressable accessibilityRole="button" onPress={finish}>
-          <Text style={styles.skip}>{t('onbSkip')}</Text>
-        </Pressable>
+        {/* No Skip on the location card: once the explanation is shown, the
+            only way forward is the system permission prompt (5.1.1). */}
+        {isLast ? (
+          <View />
+        ) : (
+          <Pressable accessibilityRole="button" onPress={finish}>
+            <Text style={styles.skip}>{t('onbSkip')}</Text>
+          </Pressable>
+        )}
       </View>
 
       {/* Illustration — one per card, as designed (1b–1e) */}
@@ -185,10 +194,7 @@ export default function OnboardingScreen() {
       </View>
 
       {isLast ? (
-        <View style={{ gap: 10 }}>
-          <PillButton label={t('onbAllow')} onPress={allowLocation} />
-          <PillButton label={t('maybeLater')} variant="ghost" onPress={finish} />
-        </View>
+        <PillButton label={t('onbContinue')} onPress={continueToPermission} />
       ) : (
         <PillButton label={t('onbNext')} onPress={next} />
       )}

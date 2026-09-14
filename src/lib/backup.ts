@@ -96,8 +96,9 @@ export async function writeLocalBackup(): Promise<void> {
 
 /**
  * Write the local auto-backup bundle if the user has auto-backup enabled.
- * Cloud (iCloud/Drive) sync is a native integration step — see okp-app-requirements.md §4.11;
- * this local bundle is what gets synced.
+ * The OS device backup (iCloud on iOS, Google Drive Auto Backup on Android)
+ * picks the bundle up from the document directory; this local bundle is what
+ * gets synced.
  */
 export async function autoBackupIfEnabled(): Promise<void> {
   const { settings } = useAppStore.getState();
@@ -107,4 +108,38 @@ export async function autoBackupIfEnabled(): Promise<void> {
   } catch {
     // Backup is best-effort; never crash the app over it.
   }
+}
+
+let autoBackupStarted = false;
+
+/**
+ * Start the app-wide auto-backup watcher. Called once from the root layout.
+ *
+ * This must NOT live inside a screen: tab screens mount lazily, so a
+ * subscription inside Settings only exists after the user opens that tab.
+ * Backups then never run for users who don't visit Settings — the original
+ * "backups not working" bug.
+ *
+ * Debounce 3s after backed-up data changes, then write the local bundle.
+ * `settings.lastBackupAt` is written by the backup itself, so settings are
+ * deliberately not watched — that would loop.
+ */
+export function initAutoBackup(): void {
+  if (autoBackupStarted) return;
+  autoBackupStarted = true;
+
+  let debounce: ReturnType<typeof setTimeout> | null = null;
+  useAppStore.subscribe((state, prev) => {
+    if (
+      state.visits === prev.visits &&
+      state.distanceKmTotal === prev.distanceKmTotal &&
+      state.celebratedMilestones === prev.celebratedMilestones
+    ) {
+      return;
+    }
+    if (debounce) clearTimeout(debounce);
+    debounce = setTimeout(() => {
+      void autoBackupIfEnabled();
+    }, 3000);
+  });
 }

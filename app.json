@@ -18,8 +18,10 @@
       "infoPlist": {
         "NSLocationWhenInUseUsageDescription": "Kraków Park Explorer shows parks near you and plans routes. Location is used only while you use the app.",
         "NSLocationAlwaysAndWhenInUseUsageDescription": "While you actively follow a route, Kraków Park Explorer watches your location to detect when you reach a park. Tracking stops the moment the route ends.",
+        "NSLocationAlwaysUsageDescription": "While you actively follow a route, Kraków Park Explorer watches your location to detect when you reach a park. Tracking stops the moment the route ends.",
         "NSCameraUsageDescription": "Take memory photos at the parks you visit.",
         "NSPhotoLibraryUsageDescription": "Attach photos from your library to park visits.",
+        "NSPhotoLibraryAddUsageDescription": "Save your park memory photos to your photo library.",
         "ITSAppUsesNonExemptEncryption": false
       }
     },
@@ -50,6 +52,7 @@
       "predictiveBackGestureEnabled": false
     },
     "plugins": [
+      "./plugins/withAndroidBackupRules.js",
       "expo-router",
       "@maplibre/maplibre-react-native",
       [
@@ -57,17 +60,22 @@
         {
           "backgroundColor": "#f5ead8",
           "image": "./assets/images/splash-icon.png",
-          "imageWidth": 175
+          "imageWidth": 175,
+          "android": {
+            "image": "./assets/images/splash-icon-android.png",
+            "imageWidth": 176
+          }
         }
       ],
       [
         "expo-location",
         {
-          "locationWhenInUsePermission": "Kraków Park Explorer shows parks near you and plans routes.",
-          "locationAlwaysAndWhenInUsePermission": "While following a route, Kraków Park Explorer detects when you reach a park. Tracking stops when the route ends.",
+          "locationWhenInUsePermission": "Kraków Park Explorer shows parks near you and plans routes. Location is used only while you use the app.",
+          "locationAlwaysAndWhenInUsePermission": "While you actively follow a route, Kraków Park Explorer watches your location to detect when you reach a park. Tracking stops the moment the route ends.",
           "isIosBackgroundLocationEnabled": true,
           "motionUsagePermission": "Motion improves arrival detection while you follow a route.",
-          "isAndroidBackgroundLocationEnabled": true
+          "isAndroidBackgroundLocationEnabled": true,
+          "locationAlwaysPermission": "While you actively follow a route, Kraków Park Explorer watches your location to detect when you reach a park. Tracking stops the moment the route ends."
         }
       ],
       [
@@ -76,6 +84,12 @@
           "photosPermission": "Attach photos from your library to park visits.",
           "cameraPermission": "Take memory photos at the parks you visit.",
           "microphonePermission": false
+        }
+      ],
+      [
+        "expo-media-library",
+        {
+          "savePhotosPermission": "Save your park memory photos to your photo library."
         }
       ]
     ],

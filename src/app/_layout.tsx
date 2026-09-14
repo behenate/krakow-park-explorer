@@ -12,10 +12,15 @@ import { View } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 
 import { I18nProvider } from '@/i18n';
+import { initAutoBackup } from '@/lib/backup';
 // Side-effect import: defines the background location task on app launch,
 // so arrival detection keeps working when the app is backgrounded.
 import '@/lib/followingLocation';
 import { ground } from '@/theme/tokens';
+
+// App-wide: watch the store and write the auto-backup bundle. Must run from
+// app start, not from the lazily-mounted Settings tab.
+initAutoBackup();
 
 SplashScreen.preventAutoHideAsync();
 
@@ -51,6 +56,9 @@ export default function RootLayout() {
             <Stack.Screen name="park/[id]" />
             <Stack.Screen name="onboarding" options={{ animation: 'fade' }} />
             <Stack.Screen name="stamp-success" options={{ animation: 'fade' }} />
+            {/* Custom-trip preview: a real pushed screen, so the Android back
+                gesture / button and the iOS edge swipe dismiss it. */}
+            <Stack.Screen name="trip-preview" />
             <Stack.Screen name="stamp-viewer" options={{ presentation: 'modal' }} />
             <Stack.Screen
               name="milestone"

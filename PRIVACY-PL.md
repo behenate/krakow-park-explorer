@@ -1,6 +1,6 @@
 # Polityka prywatności — Kraków Park Explorer
 
-_Ostatnia aktualizacja: 30 lipca 2026_
+_Ostatnia aktualizacja: 14 września 2026_
 
 [English](PRIVACY.md) · [Українська](PRIVACY-UA.md)
 
@@ -13,8 +13,11 @@ danych osobowych.
 - **Lokalizacja.** Twoja lokalizacja jest używana na urządzeniu, aby pokazać
   pobliskie parki, zaplanować trasy oraz (tylko gdy aktywnie podążasz trasą
   i wyrazisz na to zgodę) wykryć dotarcie do parku. Lokalizacja nigdy nie
-  jest do nas wysyłana — generowanie trasy przesyła do usługi wyznaczania
-  tras wyłącznie współrzędne parków, a nie Twoją pozycję.
+  jest do nas wysyłana. Gdy planujesz trasę zaczynającą się w Twojej
+  bieżącej lokalizacji, ten punkt startowy — razem ze współrzędnymi parków —
+  jest przesyłany do publicznej usługi wyznaczania tras OpenStreetMap
+  (valhalla1.openstreetmap.de), aby wyrysować trasę po ulicach. Nie jest
+  przez nas przechowywany ani powiązywany z Twoją tożsamością.
 - **Bez analityki, reklam i śledzenia.** Aplikacja nie zawiera pakietów
   analitycznych, reklamowych ani zewnętrznych trackerów.
 - **Korzystanie z sieci.** Aplikacja pobiera kafelki map (OpenFreeMap)
